@@ -1,0 +1,140 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Project Overview
+
+QQ 群机器人项目。基于 OneBot V11 协议，使用 NapCat 作为 QQ 客户端。群号 `755471390`，机器人 QQ `2668851638`。部署在 Windows 环境。
+
+v2.0.0 重构：指令逻辑已从 `reverse_bot.py`（478 行）拆出到 `scripts/command_handler.py`（1825 行）。`reverse_bot.py` 仅保留 WS 服务端、决策引擎调用、+1 复读、后台任务。
+
+决策引擎通过子进程调用模型脚本，多模型故障转移，故障转移和用户画像模块均走 OpenAI 协议（`/v1/chat/completions`）。
+
+## Commands
+
+```bash
+# 启动 NapCat（需要 Powershell / cmd，此 shell 不支持）
+start "" "E:\QQbot\NapCat\NapCat.44498.Shell\NapCatWinBootMain.exe"
+
+# 启动 reverse_bot（主机器人，WS 服务端监听 8080，必须 venv 环境）
+cd E:\QQbot && PYTHONIOENCODING=utf-8 ".\venv\Scripts\python" reverse_bot.py
+
+# 启动 standalone_bot（备选，WS 客户端连接 NapCat:6700，仅菜单功能）
+cd E:\QQbot && PYTHONIOENCODING=utf-8 python standalone_bot.py
+
+# 角色记忆管理交互式终端
+cd E:\QQbot && PYTHONIOENCODING=utf-8 python scripts/memory_manager.py
+
+# 预下载分类模型
+cd E:\QQbot && PYTHONIOENCODING=utf-8 ".\venv\Scripts\python" scripts/download_model.py
+```
+
+## Port Allocation
+
+| 端口 | 角色 |
+|------|------|
+| 8080 | reverse_bot 监听，NapCat 主动连接 |
+| 6700 | NapCat WS 服务端，standalone_bot 连接 |
+| 6099 | NapCat HTTP API 管理接口 |
+
+## WS Connection
+
+- `reverse_bot.py`: WS 服务端监听 8080，NapCat 配置 `websocketClients` 主动连接。心跳 30s ping / 10s timeout 检测僵尸连接。
+- `standalone_bot.py`: WS 客户端模式，主动连接 NapCat 6700。
+
+## Architecture
+
+```
+E:\QQbot/
+├── reverse_bot.py                # 主入口 — WS 服务端（478 行，仅核心逻辑）
+├── standalone_bot.py             # 备选 — WS 客户端，仅菜单
+├── auto_config.py                # NapCat WS 连接自动配置
+├── set_env.py                    # 设置 HF_HOME / TRANSFORMERS_CACHE
+├── VERSION_HISTORY.md            # 版本更新记录
+├── memory_manager_guide.md       # 记忆管理使用指南
+│
+├── scripts/
+│   ├── command_handler.py        # 命令处理器 — 所有指令处理逻辑（1825 行）
+│   ├── decision_engine.py        # 决策引擎（子进程隔离、故障转移、角色注入）
+│   ├── model_primary.py          # 主模型子进程（中科大代理，OpenAI 协议）
+│   ├── model_fallback.py         # 备用模型子进程（DeepSeek 官方，OpenAI 协议）
+│   ├── zero_shot_classifier.py   # 零样本分类器（sentence-transformers，按需加载）
+│   ├── reply_generator.py        # DeepSeek API 封装
+│   ├── user_profile.py           # 用户画像（缓冲+定时API，故障转移）
+│   ├── memory_manager.py         # 角色记忆管理交互式终端
+│   ├── sign_in.py                # 签到+排名+连续天数
+│   ├── mystery_number.py         # JMComic ID 验证
+│   ├── nekosia_image.py          # 猫娘图片（Nekosia API）
+│   ├── pixiv_helper.py           # Pixiv 排行榜图片（PHPSESSID 鉴权）
+│   ├── download_model.py         # HF 模型预下载
+│   └── test_*.py                 # 测试脚本
+│
+├── config/
+│   ├── decision_rules.json       # 决策引擎参数 + 故障转移配置
+│   ├── persona.txt               # 默认人设
+│   ├── active_model.json         # 当前激活的主模型（deepseek-v4-pro）
+│   ├── active_character.json     # 角色开关 + 管理员配置
+│   ├── labels.json               # 旧版分类标签
+│   └── characters/               # 角色库（每个角色一个子目录）
+│       └── soyo nagasaki/
+│           ├── info.json
+│           ├── persona.txt
+│           └── memories.json
+│
+├── archive/                      # 归档的废弃文件/项目/临时文件
+├── yijing_structured_fixed.json  # 算卦数据（卦名、卦辞、爻辞）
+├── yau_style.txt                 # Yau 命令人设
+├── SimPiano.md                   # 钢琴曲谱格式文档
+├── menu_data.json                # 菜单数据
+├── user_profiles.json            # 用户画像
+├── sign_in_data.json             # 签到数据（scripts/ 目录下）
+├── .env                          # DEEPSEEK_API_KEY
+├── models_cache/                 # HF 模型缓存
+└── logs/                         # 运行日志
+```
+
+## API Keys
+
+三组硬编码 API Key，位于 `scripts/command_handler.py`：
+
+| 用途 | Key 位置 | 端点 |
+|------|----------|------|
+| 决策引擎主模型 | `reverse_bot.py:104` DECISION_API_KEY | 中科大代理 `api.llm.ustc.edu.cn/v1` |
+| Yau / 决策引擎备用 | `reverse_bot.py:99` DEEPSEEK_API_KEY | DeepSeek 官方 `api.deepseek.com/v1` |
+| 算卦解读 | `command_handler.py` DIVINATION_API_KEY | DeepSeek 官方 `api.deepseek.com/v1` |
+
+`.env` 中的 `DEEPSEEK_API_KEY` 与硬编码的不同。决策引擎构造时使用 `reverse_bot.py` 传入的硬编码 key，当前绕过 `.env`。
+
+## Decision Engine (scripts/decision_engine.py)
+
+消息处理流水线：
+1. 写上下文环形缓冲区（每群最多 50 条）
+2. @bot → 强制回复（最高优先级）
+3. 前置过滤：过短(<3) / 纯 emoji → 跳过
+4. 冷却检查：同群间隔 <10s → 跳过
+5. 密度检查：>15 条/分钟 → 跳过
+6. 零样本分类 + 动态密度阈值
+7. 分类器降级（<0.45 置信度时纯密度决策）
+8. 生成回复（子进程）→ 内容安全过滤 → 精确去重 → 相似度去重
+
+模型调用通过子进程（subprocess）隔离，主模型 `model_primary.py` + 备用 `model_fallback.py`，均走 OpenAI 协议。
+
+## Command Handler (scripts/command_handler.py)
+
+2.0.0 新增。通过 `init_handlers()` 接收 `reverse_bot.py` 的日志器、决策引擎和发送函数引用。`handle_command()` 为统一入口，返回 True/False 表示是否匹配指令。
+
+## Help System
+
+分层帮助：
+- `帮助` / `help` → 类别一行式概览
+- `[类别]帮助` → 子类别详细命令列表
+- 类别：菜单、小巧思、角色、系统、日常
+
+## Active Model
+
+当前配置：`qwen3.6-chat`（中科大代理）
+可用模型：`deepseek-v4-flash-ascend`, `glm-5.2`, `deepseek-v4-pro`, `qwen3.6-chat`, `qwen3.6-reasoner`
+
+## Version Convention
+
+`VERSION` 遵循 `主版本.次版本.修订号`。当前 `2.0.0`。

@@ -1,0 +1,45 @@
+{
+  "_comment": "上下文驱动决策引擎配置",
+  "context_max_messages": 30,
+  "context_max_age_seconds": 300,
+  "stable_context_max": 50,
+  "stable_context_max_age": 600,
+  "topic_similarity_threshold": 0.35,
+  "topic_recent_window": 8,
+  "topic_scan_window": 5,
+  "density_high_threshold": 10,
+  "density_low_threshold": 3,
+  "max_density_skip": 15,
+  "reply_threshold_default": 0.6,
+  "classifier_fallback_threshold": 0.45,
+  "reply_max_tokens": 500,
+  "min_message_length": 3,
+
+  "failover": {
+    "_comment": "多模型故障转移配置 — 主备均使用 DeepSeek 官方 deepseek-v4-flash",
+    "retry_interval_seconds": 1800,
+    "content_checks": {
+      "min_length": 3,
+      "max_length": 500,
+      "gibberish_max_ratio": 0.6,
+      "error_keywords": [
+        "error", "exception", "sorry,", "i cannot", "i am unable",
+        "as an ai", "i'm sorry", "i apologize", "unable to",
+        "could not", "internal error", "server error",
+        "request failed", "bad request", "invalid request",
+        "这个话题我不太了解",
+        "我们聊点别的吧",
+        "换个话题吧",
+        "这个话题我不太清楚",
+        "我不太了解这个"
+      ]
+    },
+    "fallback": {
+      "_comment": "备用模型（与主模型相同，同一密钥）",
+      "api_key_env": "DEEPSEEK_API_KEY",
+      "api_base_url": "https://api.deepseek.com/v1",
+      "model": "deepseek-v4-flash",
+      "api_format": "openai"
+    }
+  }
+}
