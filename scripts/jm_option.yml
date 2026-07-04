@@ -1,0 +1,98 @@
+# ============================================================
+# JMComic-Crawler-Python 配置文件 (option.yml)
+# 官方文档: https://jmcomic.readthedocs.io/
+# ============================================================
+
+# 版本标识（由框架自动管理，请勿修改）
+version: '2.1'
+
+# 是否开启日志输出
+log: true
+
+# ── 客户端配置 ──────────────────────────────────────────────
+client:
+  # 客户端实现类型:
+  #   'api'  - 移动端API（兼容性好，不限IP地区，推荐）
+  #   'html' - 网页端（效率高，但部分IP地区受限）
+  impl: api
+
+  # 异步客户端实现（保持与 impl 一致即可）
+  async_impl: async_api
+
+  # 请求重试次数
+  retry_times: 5
+
+  # 缓存策略: null=禁用, true=option级别, 'client'=客户端级别
+  cache: null
+
+  # 自定义域名列表（留空则自动探测可用域名）
+  domain: []
+
+  # 网络请求层配置
+  postman:
+    # 请求后端类型
+    type: curl_cffi
+    meta_data:
+      # 浏览器指纹模拟 (chrome / edge / safari)
+      impersonate: chrome
+
+      # 自定义请求头（通常不需要修改）
+      headers: null
+
+      # ── 网络代理 (VPN) 配置 ──────────────────────────────
+      proxies:
+        http: http://127.0.0.1:15715
+        https: http://127.0.0.1:15715
+      # 如需切换/关闭代理，将 proxies 改回 {}
+      # 其他常见端口: Clash=7890, v2rayN=10809, SSR=1087
+      # ──────────────────────────────────────────────────────
+
+# ── 下载路径规则配置 ─────────────────────────────────────────
+dir_rule:
+  # 下载根目录（支持相对路径和绝对路径）
+  base_dir: ./downloads
+
+  # 目录命名规则: Bd=根目录, Pname=章节名
+  # 其他可用变量: Aid=本子ID, Aname=本子名, Pid=章节ID, Pindex=章节序号
+  # 图片存放于 images/ 子文件夹，插件产物（如PDF）放章节根目录
+  rule: Bd / Pname / images
+
+  # 中文简繁归一化: zh-cn=简体, zh-tw=繁体, null=不处理
+  normalize_zh: null
+
+# ── 下载配置 ─────────────────────────────────────────────────
+download:
+  # 缓存检查: true=文件已存在时跳过下载（避免重复下载）
+  cache: true
+
+  # 图片配置
+  image:
+    # 图片解码: 必须为 true（禁漫的图片是加密的，需解码）
+    decode: true
+
+    # 图片格式转换: .jpg / .png / null（null=保持原始格式）
+    suffix: null
+
+  # 多线程下载配置
+  threading:
+    # 同时下载的图片线程数（网页端建议 <= 50）
+    image: 30
+
+    # 同时下载的章节数（null=使用CPU核心数）
+    photo: null
+
+# ── 插件配置 ─────────────────────────────────────────────────
+plugins:
+  # 插件执行完毕后进行校验
+  valid: log
+
+  # 下载每个章节后触发 - 自动合成为 PDF
+  after_photo:
+    - plugin: img2pdf
+      kwargs:
+        # PDF 保存路径规则（放在章节根目录，与 images/ 平级）
+        dir_rule:
+          base_dir: ./downloads
+          rule: Bd / Pname / {Pname}.pdf
+        # 是否删除原始图片（仅保留 PDF）
+        delete_original_file: false

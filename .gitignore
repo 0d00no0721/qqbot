@@ -1,0 +1,31 @@
+# 敏感文件
+.env
+user_profiles.json
+
+# 大文件 / 二进制
+NapCat/
+venv/
+models_cache/
+
+# Python 缓存
+__pycache__/
+*.py[cod]
+*.pyo
+scripts/__pycache__/
+
+# 运行时数据
+logs/
+sign_in_data.json
+
+# 归档文件（体积大，不追踪）
+archive/
+
+# Claude Code 会话
+.claude/
+
+# IDE
+.vscode/
+.idea/
+
+# Windows
+Thumbs.db
