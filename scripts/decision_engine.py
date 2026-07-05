@@ -296,39 +296,23 @@ class DecisionEngine:
         if not persona_text:
             persona_text = self._load_persona()
 
-        # 加载记忆
+        # 加载角色通用记忆
+        char_memories = self.load_memories(char_name)
+        char_memories_formatted = self._format_memories(char_memories)
+
+        # 加载群专属记忆
+        group_memories = self.load_group_memories(char_name, gid) if gid else {}
+        group_memories_formatted = self._format_memories(group_memories)
+
+        # 组装记忆文本
         memories_text = ""
-        memories_file = os.path.join(char_dir, "memories.json")
-        if os.path.exists(memories_file):
-            try:
-                with open(memories_file, "r", encoding="utf-8") as f:
-                    memories_data = json.load(f)
-                category_names = {
-                    "identity": "【身份】",
-                    "relationships": "【关系】",
-                    "beliefs": "【信念】",
-                    "knowledge": "【知识】",
-                    "events": "【经历】",
-                    "preferences": "【偏好】",
-                }
-                memory_parts = []
-                for cat, label in category_names.items():
-                    items = memories_data.get(cat, [])
-                    if not items:
-                        continue
-                    # 按 source 排序：admin 在前，user 在后
-                    sorted_items = sorted(items, key=lambda x: (0 if x.get("source") == "admin" else 1) if isinstance(x, dict) else 1)
-                    lines = []
-                    for item in sorted_items:
-                        if isinstance(item, dict):
-                            lines.append("- " + item.get("text", ""))
-                        elif isinstance(item, str):
-                            lines.append("- " + item)
-                    memory_parts.append(label + "\n" + "\n".join(lines))
-                if memory_parts:
-                    memories_text = "\n\n以下是你所知道的事实，请将其视为你的记忆和信念：\n\n" + "\n\n".join(memory_parts)
-            except Exception:
-                pass
+        if char_memories_formatted or group_memories_formatted:
+            mem_parts = []
+            if char_memories_formatted:
+                mem_parts.append("以下是你的角色记忆（所有群共享）：\n\n" + char_memories_formatted)
+            if group_memories_formatted:
+                mem_parts.append("以下是你的群专属记忆（当前群）：\n\n" + group_memories_formatted)
+            memories_text = "\n\n" + "\n\n---\n\n".join(mem_parts)
 
         # 加载群友画像
         profile_text = ""
@@ -416,6 +400,52 @@ class DecisionEngine:
             return (False, f"写入配置失败: {e}")
 
     # ---------- 记忆管理工具方法 ----------
+
+    @staticmethod
+    def _get_char_memories_path(char_name: str) -> str:
+        """角色通用记忆路径: config/characters/{char}/memories/character/default.json"""
+        return os.path.join(
+            DecisionEngine.get_character_dir(char_name),
+            "memories", "character", "default.json",
+        )
+
+    @staticmethod
+    def _get_group_memories_path(char_name: str, gid: str) -> str:
+        """群专属记忆路径: config/characters/{char}/memories/group/{gid}.json"""
+        return os.path.join(
+            DecisionEngine.get_character_dir(char_name),
+            "memories", "group", f"{gid}.json",
+        )
+
+    @staticmethod
+    def _format_memories(data: dict) -> str:
+        """将记忆字典格式化为文本。"""
+        if not data:
+            return ""
+        category_names = {
+            "identity": "【身份】",
+            "relationships": "【关系】",
+            "beliefs": "【信念】",
+            "knowledge": "【知识】",
+            "events": "【经历】",
+            "preferences": "【偏好】",
+        }
+        parts = []
+        for cat, label in category_names.items():
+            items = data.get(cat, [])
+            if not items:
+                continue
+            sorted_items = sorted(items, key=lambda x: (0 if x.get("source") == "admin" else 1) if isinstance(x, dict) else 1)
+            lines = []
+            for item in sorted_items:
+                if isinstance(item, dict):
+                    lines.append("- " + item.get("text", ""))
+                elif isinstance(item, str):
+                    lines.append("- " + item)
+            parts.append(label + "\n" + "\n".join(lines))
+        if parts:
+            return "\n\n".join(parts)
+        return ""
 
     @staticmethod
     def get_active_character() -> dict:
@@ -530,9 +560,8 @@ class DecisionEngine:
 
     @staticmethod
     def load_memories(char_name: str) -> dict:
-        """加载角色 memories.json，返回字典。不存在则返回空字典。"""
-        char_dir = DecisionEngine.get_character_dir(char_name)
-        memories_file = os.path.join(char_dir, "memories.json")
+        """加载角色通用记忆（memories/character/default.json）。不存在则返回空字典。"""
+        memories_file = DecisionEngine._get_char_memories_path(char_name)
         if not os.path.exists(memories_file):
             return {}
         try:
@@ -543,10 +572,29 @@ class DecisionEngine:
 
     @staticmethod
     def save_memories(char_name: str, data: dict):
-        """保存记忆数据到 memories.json。"""
-        char_dir = DecisionEngine.get_character_dir(char_name)
-        os.makedirs(char_dir, exist_ok=True)
-        memories_file = os.path.join(char_dir, "memories.json")
+        """保存角色通用记忆到 memories/character/default.json。"""
+        memories_file = DecisionEngine._get_char_memories_path(char_name)
+        os.makedirs(os.path.dirname(memories_file), exist_ok=True)
+        with open(memories_file, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+
+    @staticmethod
+    def load_group_memories(char_name: str, gid: str) -> dict:
+        """加载群专属记忆（memories/group/{gid}.json）。不存在则返回空字典。"""
+        memories_file = DecisionEngine._get_group_memories_path(char_name, gid)
+        if not os.path.exists(memories_file):
+            return {}
+        try:
+            with open(memories_file, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+
+    @staticmethod
+    def save_group_memories(char_name: str, gid: str, data: dict):
+        """保存群专属记忆到 memories/group/{gid}.json。"""
+        memories_file = DecisionEngine._get_group_memories_path(char_name, gid)
+        os.makedirs(os.path.dirname(memories_file), exist_ok=True)
         with open(memories_file, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
 

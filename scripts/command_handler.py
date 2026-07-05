@@ -1594,7 +1594,7 @@ async def handle_command(websocket, data: dict, clean_message: str, raw_message:
             await send_message_fn(websocket, group_id, reply, at_user=uid_str)
         return True
 
-    # ===== 添加记忆 =====
+    # ===== 添加记忆（写入群专属记忆） =====
     if clean_message.startswith("添加记忆"):
         rest = clean_message[4:].strip()
         if not rest:
@@ -1614,7 +1614,8 @@ async def handle_command(websocket, data: dict, clean_message: str, raw_message:
         if not category or not refined_text:
             await send_message_fn(websocket, group_id, "记忆分类失败，请重试", at_user=uid_str)
             return True
-        memories = decision_engine.load_memories(char_name)
+        # 写入群专属记忆
+        memories = decision_engine.load_group_memories(char_name, gid_str)
         if category not in memories:
             memories[category] = []
         for existing in memories[category]:
@@ -1622,13 +1623,13 @@ async def handle_command(websocket, data: dict, clean_message: str, raw_message:
                 await send_message_fn(websocket, group_id, f"这条记忆已经存在了", at_user=uid_str)
                 return True
         memories[category].append({"text": refined_text, "source": source, "by": uid_str})
-        decision_engine.save_memories(char_name, memories)
+        decision_engine.save_group_memories(char_name, gid_str, memories)
         cat_label = {"identity": "身份", "relationships": "关系", "beliefs": "信念",
                      "knowledge": "知识", "events": "经历", "preferences": "偏好"}.get(category, category)
-        await send_message_fn(websocket, group_id, f"已添加记忆 [{cat_label}]：{refined_text}", at_user=uid_str)
+        await send_message_fn(websocket, group_id, f"已添加群记忆 [{cat_label}]：{refined_text}", at_user=uid_str)
         return True
 
-    # ===== 删除记忆 =====
+    # ===== 删除记忆（删除群专属记忆） =====
     if clean_message.startswith("删除记忆"):
         rest = clean_message[4:].strip()
         if not rest:
@@ -1643,7 +1644,8 @@ async def handle_command(websocket, data: dict, clean_message: str, raw_message:
         if not char_name:
             await send_message_fn(websocket, group_id, "当前群未配置角色", at_user=uid_str)
             return True
-        memories = decision_engine.load_memories(char_name)
+        # 操作群专属记忆
+        memories = decision_engine.load_group_memories(char_name, gid_str)
         deleted = 0
         for cat in list(memories.keys()):
             original_count = len(memories[cat])
@@ -1653,11 +1655,11 @@ async def handle_command(websocket, data: dict, clean_message: str, raw_message:
                 or not (_is_admin(uid_str) or (isinstance(item, dict) and item.get("by") == uid_str))
             ]
             deleted += original_count - len(memories[cat])
-        decision_engine.save_memories(char_name, memories)
-        await send_message_fn(websocket, group_id, f"已删除 {deleted} 条匹配的记忆", at_user=uid_str)
+        decision_engine.save_group_memories(char_name, gid_str, memories)
+        await send_message_fn(websocket, group_id, f"已删除 {deleted} 条匹配的群记忆", at_user=uid_str)
         return True
 
-    # ===== 查看记忆 =====
+    # ===== 查看记忆（角色记忆 + 群记忆） =====
     if clean_message == "查看记忆":
         active_cfg = decision_engine.get_active_character()
         if not active_cfg.get("enabled"):
@@ -1668,7 +1670,8 @@ async def handle_command(websocket, data: dict, clean_message: str, raw_message:
         if not char_name:
             await send_message_fn(websocket, group_id, "当前群未配置角色", at_user=uid_str)
             return True
-        memories = decision_engine.load_memories(char_name)
+        char_memories = decision_engine.load_memories(char_name)
+        group_memories = decision_engine.load_group_memories(char_name, gid_str)
         cat_labels = {
             "identity": "身份", "relationships": "关系", "beliefs": "信念",
             "knowledge": "知识", "events": "经历", "preferences": "偏好",
@@ -1682,11 +1685,16 @@ async def handle_command(websocket, data: dict, clean_message: str, raw_message:
         output.write(f"角色: {char_display}\n")
         output.write(f"群: {gid_str}\n")
         output.write("=" * 40 + "\n\n")
-        if not memories:
-            output.write("当前角色没有记忆\n")
+
+        has_any = False
+        # 角色通用记忆
+        output.write("========== 角色通用记忆 ==========\n")
+        if not char_memories:
+            output.write("（无）\n")
         else:
+            has_any = True
             for cat, label in cat_labels.items():
-                items = memories.get(cat, [])
+                items = char_memories.get(cat, [])
                 if not items:
                     continue
                 output.write(f"【{label}】\n")
@@ -1698,8 +1706,29 @@ async def handle_command(websocket, data: dict, clean_message: str, raw_message:
                         output.write(f"- {item}\n")
                 output.write("\n")
 
+        # 群专属记忆
+        output.write("========== 群专属记忆 ==========\n")
+        if not group_memories:
+            output.write("（无）\n")
+        else:
+            has_any = True
+            for cat, label in cat_labels.items():
+                items = group_memories.get(cat, [])
+                if not items:
+                    continue
+                output.write(f"【{label}】\n")
+                for item in items:
+                    if isinstance(item, dict):
+                        src = "⭐" if item.get("source") == "admin" else ""
+                        output.write(f"{src}- {item.get('text', '')}\n")
+                    elif isinstance(item, str):
+                        output.write(f"- {item}\n")
+                output.write("\n")
+
+        if not has_any:
+            output.write("\n当前角色没有任何记忆\n")
+
         # 写入临时文件并发送
-        import tempfile
         tmp_dir = os.path.join(SCRIPT_DIR, "logs")
         tmp_file = os.path.join(tmp_dir, f"memories_{char_name}_{gid_str}.txt")
         with open(tmp_file, "w", encoding="utf-8") as f:
