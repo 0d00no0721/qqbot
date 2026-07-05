@@ -74,12 +74,15 @@ E:\QQbot/
 │   ├── persona.txt               # 默认人设
 │   ├── active_model.json         # 当前激活的主模型（deepseek-v4-pro）
 │   ├── active_character.json     # 角色开关 + 管理员配置
+│   ├── group_characters.json     # 群→角色映射
 │   ├── labels.json               # 旧版分类标签
 │   └── characters/               # 角色库（每个角色一个子目录）
 │       └── soyo nagasaki/
 │           ├── info.json
 │           ├── persona.txt
-│           └── memories.json
+│           └── memories/
+│               ├── character/default.json  # 角色通用记忆
+│               └── group/755471390.json   # 群专属记忆
 │
 ├── archive/                      # 归档的废弃文件/项目/临时文件
 ├── yijing_structured_fixed.json  # 算卦数据（卦名、卦辞、爻辞）
@@ -137,4 +140,4 @@ E:\QQbot/
 
 ## Version Convention
 
-`VERSION` 遵循 `主版本.次版本.修订号`。当前 `2.0.1`。
+`VERSION` 遵循 `主版本.次版本.修订号`。当前 `2.1.0`。

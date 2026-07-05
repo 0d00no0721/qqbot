@@ -2,6 +2,7 @@
 
 | 版本 | 内容 |
 |------|------|
+| **2.1.0** | 多群多角色多记忆：群→角色映射（group_characters.json）、群专属记忆（memories/group/）、角色通用记忆（memories/character/）、别名覆盖所有角色、查看记忆改为发送文件 |
 | **2.0.1** | API Key 脱敏：9 个文件 10 处硬编码 Key 迁移至 .env 环境变量，新增 .env.example 模板，初始化 Git 仓库并推送到 GitHub |
 | **2.0.0** | 指令逻辑从 `reverse_bot.py` 拆出到 `scripts/command_handler.py`，`reverse_bot.py` 从 2395 行精简至 478 行，实现指令与核心逻辑完全分离 |
 | 1.14.0 | 新增 Pixiv 排行榜随机图片（日榜/周榜/月榜，PHPSESSID 鉴权） |

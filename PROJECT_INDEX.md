@@ -73,7 +73,7 @@ PYTHONIOENCODING=utf-8 ".\venv\Scripts\python" scripts/download_model.py
 
 ## 📌 当前状态
 
-- **版本**：2.0.1（API Key 脱敏迁移至 .env）
+- **版本**：2.1.0（多群多角色多记忆）
 - **活跃模型**：`qwen3.6-chat`（中科大代理）
 - **角色**：`soyo nagasaki`（已启用）
 - **管理员**：`784427550`
@@ -81,4 +81,4 @@ PYTHONIOENCODING=utf-8 ".\venv\Scripts\python" scripts/download_model.py
 
 ---
 
-📅 **最后更新**：2026-07-04
+📅 **最后更新**：2026-07-05
