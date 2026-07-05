@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 QQ 群机器人项目。基于 OneBot V11 协议，使用 NapCat 作为 QQ 客户端。群号 `755471390`，机器人 QQ `2668851638`。部署在 Windows 环境。
 
-v2.0.0 重构：指令逻辑已从 `reverse_bot.py`（483 行）拆出到 `scripts/command_handler.py`（1883 行）。`reverse_bot.py` 仅保留 WS 服务端、决策引擎调用、+1 复读、后台任务。
+v2.0.0 重构：指令逻辑已从 `reverse_bot.py`（483 行）拆出到 `scripts/command_handler.py`（2061 行）。`reverse_bot.py` 仅保留 WS 服务端、决策引擎调用、+1 复读、后台任务。
 
 决策引擎通过子进程调用模型脚本，多模型故障转移，故障转移和用户画像模块均走 OpenAI 协议（`/v1/chat/completions`）。
 
@@ -130,6 +130,10 @@ E:\QQbot/
 
 2.0.0 新增。通过 `init_handlers()` 接收 `reverse_bot.py` 的日志器、决策引擎和发送函数引用。`handle_command()` 为统一入口，返回 True/False 表示是否匹配指令。
 
+## Zhouli (周礼)
+
+2.2.0 新增。`@bot 周礼 <文字>` 将大白话改写成"合乎周礼"白话翻译腔。System Prompt 源自 `zhouli-translator-ref` 项目（`Aspirin0000/zhouli-translator`），在此基础上简化了 user prompt（AI 自动选择辞气）。API 调用优先中科大代理（`DECISION_API_KEY`），失败后切 DeepSeek 官方（`DEEPSEEK_API_KEY`）。
+
 ## 多群多角色
 
 - `config/group_characters.json`：群→角色映射，未配置的群回退 `active_character.json` 全局默认
@@ -153,4 +157,4 @@ E:\QQbot/
 
 ## Version Convention
 
-`VERSION` 遵循 `主版本.次版本.修订号`。当前 `2.1.0`。
+`VERSION` 遵循 `主版本.次版本.修订号`。当前 `2.2.1`。

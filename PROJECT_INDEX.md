@@ -26,7 +26,7 @@
 
 | 文件 | 职责 |
 |------|------|
-| `command_handler.py` | **命令处理器** — 所有指令处理逻辑（1883 行） |
+| `command_handler.py` | **命令处理器** — 所有指令处理逻辑（2061 行） |
 | `decision_engine.py` | 上下文驱动发言决策（子进程隔离、故障转移、角色注入，1251 行） |
 | `model_primary.py` | 主模型子进程（中科大代理，OpenAI 协议） |
 | `model_fallback.py` | 备用模型子进程（DeepSeek 官方） |
@@ -74,13 +74,14 @@ PYTHONIOENCODING=utf-8 ".\venv\Scripts\python" scripts/download_model.py
 
 ## 📌 当前状态
 
-- **版本**：2.1.0（多群多角色多记忆）
+- **版本**：2.2.1（周礼文案生成）
 - **活跃模型**：`deepseek-v4-pro`（中科大代理）
 - **角色**：`soyo nagasaki`（已启用）
 - **群角色映射**：`group_characters.json`
 - **记忆结构**：`memories/character/` + `memories/group/`
 - **管理员**：`784427550`
 - **帮助系统**：分层帮助（`帮助` / `[类别]帮助`）
+- **周礼**：`@bot 周礼 <文字>` 白话翻译腔生成
 
 ---
 
