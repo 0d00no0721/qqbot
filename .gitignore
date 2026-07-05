@@ -29,3 +29,6 @@ archive/
 
 # Windows
 Thumbs.db
+
+# Local backups
+backup_pre_phase1/
