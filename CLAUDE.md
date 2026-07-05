@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 QQ 群机器人项目。基于 OneBot V11 协议，使用 NapCat 作为 QQ 客户端。群号 `755471390`，机器人 QQ `2668851638`。部署在 Windows 环境。
 
-v2.0.0 重构：指令逻辑已从 `reverse_bot.py`（478 行）拆出到 `scripts/command_handler.py`（1825 行）。`reverse_bot.py` 仅保留 WS 服务端、决策引擎调用、+1 复读、后台任务。
+v2.0.0 重构：指令逻辑已从 `reverse_bot.py`（483 行）拆出到 `scripts/command_handler.py`（1883 行）。`reverse_bot.py` 仅保留 WS 服务端、决策引擎调用、+1 复读、后台任务。
 
 决策引擎通过子进程调用模型脚本，多模型故障转移，故障转移和用户画像模块均走 OpenAI 协议（`/v1/chat/completions`）。
 
@@ -46,16 +46,17 @@ cd E:\QQbot && PYTHONIOENCODING=utf-8 ".\venv\Scripts\python" scripts/download_m
 
 ```
 E:\QQbot/
-├── reverse_bot.py                # 主入口 — WS 服务端（478 行，仅核心逻辑）
+├── reverse_bot.py                # 主入口 — WS 服务端（483 行，仅核心逻辑）
 ├── standalone_bot.py             # 备选 — WS 客户端，仅菜单
 ├── auto_config.py                # NapCat WS 连接自动配置
 ├── set_env.py                    # 设置 HF_HOME / TRANSFORMERS_CACHE
 ├── VERSION_HISTORY.md            # 版本更新记录
 ├── memory_manager_guide.md       # 记忆管理使用指南
+├── multi_group_character_plan.md # 多群多角色改造方案文档
 │
 ├── scripts/
-│   ├── command_handler.py        # 命令处理器 — 所有指令处理逻辑（1825 行）
-│   ├── decision_engine.py        # 决策引擎（子进程隔离、故障转移、角色注入）
+│   ├── command_handler.py        # 命令处理器 — 所有指令处理逻辑（1883 行）
+│   ├── decision_engine.py        # 决策引擎（子进程隔离、故障转移、角色注入，1251 行）
 │   ├── model_primary.py          # 主模型子进程（中科大代理，OpenAI 协议）
 │   ├── model_fallback.py         # 备用模型子进程（DeepSeek 官方，OpenAI 协议）
 │   ├── zero_shot_classifier.py   # 零样本分类器（sentence-transformers，按需加载）
@@ -72,17 +73,19 @@ E:\QQbot/
 ├── config/
 │   ├── decision_rules.json       # 决策引擎参数 + 故障转移配置
 │   ├── persona.txt               # 默认人设
-│   ├── active_model.json         # 当前激活的主模型（deepseek-v4-pro）
+│   ├── active_model.json         # 当前激活的主模型
 │   ├── active_character.json     # 角色开关 + 管理员配置
 │   ├── group_characters.json     # 群→角色映射
 │   ├── labels.json               # 旧版分类标签
 │   └── characters/               # 角色库（每个角色一个子目录）
 │       └── soyo nagasaki/
-│           ├── info.json
-│           ├── persona.txt
+│           ├── info.json         # 角色名 + 别名
+│           ├── persona.txt       # 角色人设
 │           └── memories/
-│               ├── character/default.json  # 角色通用记忆
-│               └── group/755471390.json   # 群专属记忆
+│               ├── character/    # 角色通用记忆（memory_manager.py 管理）
+│               │   └── default.json
+│               └── group/        # 群专属记忆（@bot 添加记忆 产生）
+│                   └── 755471390.json
 │
 ├── archive/                      # 归档的废弃文件/项目/临时文件
 ├── yijing_structured_fixed.json  # 算卦数据（卦名、卦辞、爻辞）
@@ -91,22 +94,23 @@ E:\QQbot/
 ├── menu_data.json                # 菜单数据
 ├── user_profiles.json            # 用户画像
 ├── sign_in_data.json             # 签到数据（scripts/ 目录下）
-├── .env                          # DEEPSEEK_API_KEY
+├── .env                          # API Key 等凭据（不提交）
+├── .env.example                  # 凭据模板
 ├── models_cache/                 # HF 模型缓存
 └── logs/                         # 运行日志
 ```
 
 ## API Keys
 
-三组硬编码 API Key，位于 `scripts/command_handler.py`：
+所有 API Key 从 `.env` 读取（`reverse_bot.py` 通过 `load_dotenv()` 加载）：
 
-| 用途 | Key 位置 | 端点 |
+| 用途 | 环境变量 | 端点 |
 |------|----------|------|
-| 决策引擎主模型 | `reverse_bot.py:104` DECISION_API_KEY | 中科大代理 `api.llm.ustc.edu.cn/v1` |
-| Yau / 决策引擎备用 | `reverse_bot.py:99` DEEPSEEK_API_KEY | DeepSeek 官方 `api.deepseek.com/v1` |
-| 算卦解读 | `command_handler.py` DIVINATION_API_KEY | DeepSeek 官方 `api.deepseek.com/v1` |
+| 决策引擎主模型 | `DECISION_API_KEY` | 中科大代理 `api.llm.ustc.edu.cn/v1` |
+| Yau / 决策引擎备用 | `DEEPSEEK_API_KEY` | DeepSeek 官方 `api.deepseek.com/v1` |
+| 算卦解读 | `DIVINATION_API_KEY` | DeepSeek 官方 `api.deepseek.com/v1` |
 
-`.env` 中的 `DEEPSEEK_API_KEY` 与硬编码的不同。决策引擎构造时使用 `reverse_bot.py` 传入的硬编码 key，当前绕过 `.env`。
+`.env` 不提交到 Git，通过 `.env.example` 参考。
 
 ## Decision Engine (scripts/decision_engine.py)
 
@@ -126,6 +130,15 @@ E:\QQbot/
 
 2.0.0 新增。通过 `init_handlers()` 接收 `reverse_bot.py` 的日志器、决策引擎和发送函数引用。`handle_command()` 为统一入口，返回 True/False 表示是否匹配指令。
 
+## 多群多角色
+
+- `config/group_characters.json`：群→角色映射，未配置的群回退 `active_character.json` 全局默认
+- `config/characters/{角色}/memories/character/default.json`：角色通用记忆
+- `config/characters/{角色}/memories/group/{gid}.json`：群专属记忆
+- `@bot 添加记忆` 写入群记忆，`@bot 查看记忆` 发送合并文件
+- `memory_manager.py` 管理角色通用记忆
+- 别名检测覆盖所有已分配角色的别名
+
 ## Help System
 
 分层帮助：
@@ -135,7 +148,7 @@ E:\QQbot/
 
 ## Active Model
 
-当前配置：`qwen3.6-chat`（中科大代理）
+当前配置：`deepseek-v4-pro`（中科大代理）
 可用模型：`deepseek-v4-flash-ascend`, `glm-5.2`, `deepseek-v4-pro`, `qwen3.6-chat`, `qwen3.6-reasoner`
 
 ## Version Convention
