@@ -236,13 +236,13 @@ async def handle_message(websocket, data: dict):
     gid_str = str(group_id)
     clean_or_raw = clean_message or raw_message
     if not bot_mentioned:
-        aliases = decision_engine.get_character_aliases()
-        if aliases:
+        all_aliases = decision_engine.get_all_character_aliases()
+        if all_aliases:
             msg_lower = clean_or_raw.lower()
-            for alias in aliases:
-                if alias.lower() in msg_lower:
+            for alias_lower, alias_gid in all_aliases.items():
+                if alias_lower in msg_lower:
                     bot_mentioned = True
-                    bot_logger.info(f"[名字匹配] '{alias}' → 视为 @bot，群{gid_str}")
+                    bot_logger.info(f"[名字匹配] '{alias_lower}' → 视为 @bot，群{alias_gid}")
                     break
 
     # ===== 决策引擎 =====

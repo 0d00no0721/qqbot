@@ -267,26 +267,19 @@ class DecisionEngine:
 
     def _load_character(self, gid: str = "") -> str:
         """加载当前角色 system prompt（persona + memories + 群友画像）。
+        根据 gid 查询群→角色映射，回退到全局默认。
         无角色时回退到 _load_persona()。
         """
-        config_dir = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            "config",
-        )
-        active_file = os.path.join(config_dir, "active_character.json")
+        # 全局 enabled 开关：停用角色时，所有群都不使用角色
+        active_cfg = self.get_active_character()
+        if not active_cfg.get("enabled", False):
+            return self._load_persona()
 
-        # 读取 active_character.json
-        try:
-            if not os.path.exists(active_file):
-                return self._load_persona()
-            with open(active_file, "r", encoding="utf-8") as f:
-                active_cfg = json.load(f)
-            if not active_cfg.get("enabled", False):
-                return self._load_persona()
-            char_name = active_cfg.get("character", "")
-            if not char_name:
-                return self._load_persona()
-        except Exception:
+        config_dir = self._get_config_dir()
+
+        # 查群→角色映射
+        char_name = self.get_character_for_group(gid)
+        if not char_name:
             return self._load_persona()
 
         char_dir = os.path.join(config_dir, "characters", char_name)
@@ -438,6 +431,94 @@ class DecisionEngine:
         except Exception:
             return {"enabled": False, "character": "", "admin_ids": []}
 
+    # ---------- 群→角色映射 ----------
+
+    @staticmethod
+    def _get_config_dir() -> str:
+        """返回 config/ 目录路径（内部工具方法）。"""
+        return os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "config",
+        )
+
+    @staticmethod
+    def get_group_characters() -> dict:
+        """读取 group_characters.json，返回 {gid: char_name, ...}。
+        文件不存在时自动创建（使用全局默认角色 + 当前群）。
+        """
+        group_file = os.path.join(DecisionEngine._get_config_dir(), "group_characters.json")
+        try:
+            with open(group_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                return data
+        except (FileNotFoundError, json.JSONDecodeError):
+            pass
+
+        # 文件不存在或损坏 → 从全局默认初始化
+        active_cfg = DecisionEngine.get_active_character()
+        default_char = active_cfg.get("character", "")
+        if default_char:
+            # 用当前主群初始化
+            result = {"755471390": default_char}
+        else:
+            result = {}
+
+        try:
+            os.makedirs(os.path.dirname(group_file), exist_ok=True)
+            with open(group_file, "w", encoding="utf-8") as f:
+                json.dump(result, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"[决策引擎] 初始化 group_characters.json 失败: {e}", file=sys.stderr)
+
+        return result
+
+    @staticmethod
+    def get_character_for_group(gid: str) -> Optional[str]:
+        """获取某群分配的角色名。
+        查 group_characters.json[gid] → 有则返回 → 无则回退 active_character.json 全局默认。
+        如果全局默认也未启用，返回 None。
+        """
+        mapping = DecisionEngine.get_group_characters()
+
+        # 优先查群映射
+        if gid in mapping:
+            char_name = mapping[gid]
+            # 验证角色目录存在
+            if char_name and os.path.isdir(DecisionEngine.get_character_dir(char_name)):
+                return char_name
+
+        # 回退：全局默认
+        active_cfg = DecisionEngine.get_active_character()
+        if active_cfg.get("enabled") and active_cfg.get("character"):
+            return active_cfg["character"]
+
+        return None
+
+    @staticmethod
+    def set_character_for_group(gid: str, char_name: str):
+        """为某群分配角色（写入 group_characters.json）。"""
+        mapping = DecisionEngine.get_group_characters()
+        mapping[gid] = char_name
+        group_file = os.path.join(DecisionEngine._get_config_dir(), "group_characters.json")
+        try:
+            with open(group_file, "w", encoding="utf-8") as f:
+                json.dump(mapping, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"[决策引擎] 写入 group_characters.json 失败: {e}", file=sys.stderr)
+
+    @staticmethod
+    def unset_character_for_group(gid: str):
+        """取消某群的群角色分配（回退到全局默认）。"""
+        mapping = DecisionEngine.get_group_characters()
+        mapping.pop(gid, None)
+        group_file = os.path.join(DecisionEngine._get_config_dir(), "group_characters.json")
+        try:
+            with open(group_file, "w", encoding="utf-8") as f:
+                json.dump(mapping, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"[决策引擎] 写入 group_characters.json 失败: {e}", file=sys.stderr)
+
     @staticmethod
     def get_character_dir(char_name: str) -> str:
         """返回角色目录路径。"""
@@ -486,7 +567,9 @@ class DecisionEngine:
 
     @staticmethod
     def get_character_aliases() -> list:
-        """获取当前激活角色的别名列表。角色未开启时返回空列表。"""
+        """获取当前激活角色的别名列表。角色未开启时返回空列表。
+        向后兼容：返回全局默认角色的别名。
+        """
         active_cfg = DecisionEngine.get_active_character()
         if not active_cfg.get("enabled") or not active_cfg.get("character"):
             return []
@@ -497,6 +580,64 @@ class DecisionEngine:
                 info = json.load(f)
             aliases = info.get("aliases", [])
             # 把角色名本身也加入别名
+            name = info.get("name", "")
+            if name and name not in aliases:
+                aliases.insert(0, name)
+            return aliases
+        except Exception:
+            return []
+
+    @staticmethod
+    def get_all_character_aliases() -> dict:
+        """获取所有已分配角色的别名映射 {alias_lower: gid}。
+        覆盖所有群已分配的角色别名，用于 reverse_bot.py 的别名检测。
+        同时加入全局默认角色的别名（用于未配置群的别名匹配）。
+        """
+        result = {}
+        mapping = DecisionEngine.get_group_characters()
+
+        # 遍历每个群的映射
+        for gid, char_name in mapping.items():
+            if not char_name:
+                continue
+            aliases = DecisionEngine._get_char_aliases(char_name)
+            for alias in aliases:
+                alias_lower = alias.lower()
+                if alias_lower not in result:
+                    result[alias_lower] = gid
+
+        # 加入全局默认角色别名（未配置群使用）
+        active_cfg = DecisionEngine.get_active_character()
+        if active_cfg.get("enabled") and active_cfg.get("character"):
+            default_char = active_cfg["character"]
+            # 只加入未在任何群映射中的角色
+            if default_char not in mapping.values():
+                default_aliases = DecisionEngine._get_char_aliases(default_char)
+                for alias in default_aliases:
+                    alias_lower = alias.lower()
+                    if alias_lower not in result:
+                        result[alias_lower] = "default"
+
+        return result
+
+    @staticmethod
+    def get_character_info(char_name: str) -> Optional[dict]:
+        """读取角色 info.json，返回字典。不存在则返回 None。"""
+        info_file = os.path.join(DecisionEngine.get_character_dir(char_name), "info.json")
+        try:
+            with open(info_file, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _get_char_aliases(char_name: str) -> list:
+        """读取角色 info.json，返回别名列表（含角色名本身）。"""
+        info_file = os.path.join(DecisionEngine.get_character_dir(char_name), "info.json")
+        try:
+            with open(info_file, "r", encoding="utf-8") as f:
+                info = json.load(f)
+            aliases = info.get("aliases", [])
             name = info.get("name", "")
             if name and name not in aliases:
                 aliases.insert(0, name)

@@ -1601,10 +1601,14 @@ async def handle_command(websocket, data: dict, clean_message: str, raw_message:
             await send_message_fn(websocket, group_id, "请提供要添加的记忆内容", at_user=uid_str)
             return True
         active_cfg = decision_engine.get_active_character()
-        if not active_cfg.get("enabled") or not active_cfg.get("character"):
+        if not active_cfg.get("enabled"):
             await send_message_fn(websocket, group_id, "角色模式未启用，请先启用角色", at_user=uid_str)
             return True
-        char_name = active_cfg["character"]
+        gid_str = str(group_id)
+        char_name = decision_engine.get_character_for_group(gid_str)
+        if not char_name:
+            await send_message_fn(websocket, group_id, "当前群未配置角色，请先启用角色", at_user=uid_str)
+            return True
         source = "admin" if _is_admin(uid_str) else "user"
         category, refined_text = await _classify_memory(rest, char_name)
         if not category or not refined_text:
@@ -1631,10 +1635,14 @@ async def handle_command(websocket, data: dict, clean_message: str, raw_message:
             await send_message_fn(websocket, group_id, "请提供删除记忆的关键词", at_user=uid_str)
             return True
         active_cfg = decision_engine.get_active_character()
-        if not active_cfg.get("enabled") or not active_cfg.get("character"):
+        if not active_cfg.get("enabled"):
             await send_message_fn(websocket, group_id, "角色模式未启用", at_user=uid_str)
             return True
-        char_name = active_cfg["character"]
+        gid_str = str(group_id)
+        char_name = decision_engine.get_character_for_group(gid_str)
+        if not char_name:
+            await send_message_fn(websocket, group_id, "当前群未配置角色", at_user=uid_str)
+            return True
         memories = decision_engine.load_memories(char_name)
         deleted = 0
         for cat in list(memories.keys()):
@@ -1652,17 +1660,23 @@ async def handle_command(websocket, data: dict, clean_message: str, raw_message:
     # ===== 查看记忆 =====
     if clean_message == "查看记忆":
         active_cfg = decision_engine.get_active_character()
-        if not active_cfg.get("enabled") or not active_cfg.get("character"):
+        if not active_cfg.get("enabled"):
             await send_message_fn(websocket, group_id, "角色模式未启用", at_user=uid_str)
             return True
-        char_name = active_cfg["character"]
+        gid_str = str(group_id)
+        char_name = decision_engine.get_character_for_group(gid_str)
+        if not char_name:
+            await send_message_fn(websocket, group_id, "当前群未配置角色", at_user=uid_str)
+            return True
         memories = decision_engine.load_memories(char_name)
         cat_labels = {
             "identity": "身份", "relationships": "关系", "beliefs": "信念",
             "knowledge": "知识", "events": "经历", "preferences": "偏好",
         }
+        char_info = decision_engine.get_character_info(char_name)
+        char_display = char_info.get("name", char_name) if char_info else char_name
         if not memories:
-            reply = "当前角色没有记忆"
+            reply = f"当前群角色「{char_display}」没有记忆"
         else:
             parts = []
             for cat, label in cat_labels.items():
@@ -1677,7 +1691,7 @@ async def handle_command(websocket, data: dict, clean_message: str, raw_message:
                     elif isinstance(item, str):
                         lines.append(f"- {item}")
                 parts.append(f"【{label}】\n" + "\n".join(lines))
-            reply = "\n\n".join(parts)
+            reply = f"当前群角色「{char_display}」的记忆：\n\n" + "\n\n".join(parts)
         await send_message_fn(websocket, group_id, reply, at_user=uid_str)
         return True
 
