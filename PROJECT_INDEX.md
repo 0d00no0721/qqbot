@@ -74,7 +74,7 @@ PYTHONIOENCODING=utf-8 ".\venv\Scripts\python" scripts/download_model.py
 
 ## 📌 当前状态
 
-- **版本**：2.2.1（周礼文案生成）
+- **版本**：2.2.2（周礼文案生成）
 - **活跃模型**：`deepseek-v4-pro`（中科大代理）
 - **角色**：`soyo nagasaki`（已启用）
 - **群角色映射**：`group_characters.json`
