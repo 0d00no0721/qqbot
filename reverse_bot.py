@@ -5,10 +5,15 @@
 脚本作为服务端，NapCat 作为客户端主动连接
 """
 
+import os
+
+# 加载 .env 文件（必须在 os.getenv 之前）
+from dotenv import load_dotenv
+load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
+
 import asyncio
 import json
 import logging
-import os
 import sys
 import traceback
 import time

@@ -1675,24 +1675,39 @@ async def handle_command(websocket, data: dict, clean_message: str, raw_message:
         }
         char_info = decision_engine.get_character_info(char_name)
         char_display = char_info.get("name", char_name) if char_info else char_name
+
+        # 构建文件内容
+        import io
+        output = io.StringIO()
+        output.write(f"角色: {char_display}\n")
+        output.write(f"群: {gid_str}\n")
+        output.write("=" * 40 + "\n\n")
         if not memories:
-            reply = f"当前群角色「{char_display}」没有记忆"
+            output.write("当前角色没有记忆\n")
         else:
-            parts = []
             for cat, label in cat_labels.items():
                 items = memories.get(cat, [])
                 if not items:
                     continue
-                lines = []
+                output.write(f"【{label}】\n")
                 for item in items:
                     if isinstance(item, dict):
                         src = "⭐" if item.get("source") == "admin" else ""
-                        lines.append(f"{src}- {item.get('text', '')}")
+                        output.write(f"{src}- {item.get('text', '')}\n")
                     elif isinstance(item, str):
-                        lines.append(f"- {item}")
-                parts.append(f"【{label}】\n" + "\n".join(lines))
-            reply = f"当前群角色「{char_display}」的记忆：\n\n" + "\n\n".join(parts)
-        await send_message_fn(websocket, group_id, reply, at_user=uid_str)
+                        output.write(f"- {item}\n")
+                output.write("\n")
+
+        # 写入临时文件并发送
+        import tempfile
+        tmp_dir = os.path.join(SCRIPT_DIR, "logs")
+        tmp_file = os.path.join(tmp_dir, f"memories_{char_name}_{gid_str}.txt")
+        with open(tmp_file, "w", encoding="utf-8") as f:
+            f.write(output.getvalue())
+        await send_group_file_fn(websocket, group_id, tmp_file)
+        await send_message_fn(websocket, group_id, f"已发送「{char_display}」的记忆文件", at_user=uid_str)
+        # 清理临时文件
+        os.remove(tmp_file)
         return True
 
     # ===== 切换角色 =====
