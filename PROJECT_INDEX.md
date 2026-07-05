@@ -10,7 +10,7 @@
 
 | 目录/文件 | 职责 |
 |-----------|------|
-| `reverse_bot.py` | **主机器人** WS 服务端入口（478 行，仅核心逻辑） |
+| `reverse_bot.py` | **主机器人** WS 服务端入口（483 行，仅核心逻辑） |
 | `standalone_bot.py` | 备选 WS 客户端启动 |
 | `auto_config.py` | NapCat WS 连接自动配置 |
 | `set_env.py` | 设置 HF_HOME / TRANSFORMERS_CACHE |
@@ -26,8 +26,8 @@
 
 | 文件 | 职责 |
 |------|------|
-| `command_handler.py` | **命令处理器** — 所有指令处理逻辑（1825 行） |
-| `decision_engine.py` | 上下文驱动发言决策（子进程隔离、故障转移、角色注入） |
+| `command_handler.py` | **命令处理器** — 所有指令处理逻辑（1883 行） |
+| `decision_engine.py` | 上下文驱动发言决策（子进程隔离、故障转移、角色注入，1251 行） |
 | `model_primary.py` | 主模型子进程（中科大代理，OpenAI 协议） |
 | `model_fallback.py` | 备用模型子进程（DeepSeek 官方） |
 | `zero_shot_classifier.py` | 零样本分类器（sentence-transformers，按需加载） |
@@ -47,7 +47,8 @@
 | `decision_rules.json` | 决策引擎参数+故障转移配置 |
 | `persona.txt` | 默认人设 |
 | `active_character.json` | 角色开关+管理员配置 |
-| `active_model.json` | 当前激活的主模型 |
+| `group_characters.json` | 群→角色映射 |
+| `active_model.json` | 当前激活的主模型（deepseek-v4-pro） |
 | `characters/` | 角色库（每个角色一个子目录） |
 | `soyo nagasaki/` | 当前角色（开启中） |
 
@@ -74,8 +75,10 @@ PYTHONIOENCODING=utf-8 ".\venv\Scripts\python" scripts/download_model.py
 ## 📌 当前状态
 
 - **版本**：2.1.0（多群多角色多记忆）
-- **活跃模型**：`qwen3.6-chat`（中科大代理）
+- **活跃模型**：`deepseek-v4-pro`（中科大代理）
 - **角色**：`soyo nagasaki`（已启用）
+- **群角色映射**：`group_characters.json`
+- **记忆结构**：`memories/character/` + `memories/group/`
 - **管理员**：`784427550`
 - **帮助系统**：分层帮助（`帮助` / `[类别]帮助`）
 
