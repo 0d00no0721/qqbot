@@ -137,4 +137,4 @@ E:\QQbot/
 
 ## Version Convention
 
-`VERSION` 遵循 `主版本.次版本.修订号`。当前 `2.0.0`。
+`VERSION` 遵循 `主版本.次版本.修订号`。当前 `2.0.1`。

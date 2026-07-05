@@ -73,7 +73,7 @@ PYTHONIOENCODING=utf-8 ".\venv\Scripts\python" scripts/download_model.py
 
 ## 📌 当前状态
 
-- **版本**：2.0.0（指令逻辑拆出至 command_handler.py）
+- **版本**：2.0.1（API Key 脱敏迁移至 .env）
 - **活跃模型**：`qwen3.6-chat`（中科大代理）
 - **角色**：`soyo nagasaki`（已启用）
 - **管理员**：`784427550`
