@@ -48,7 +48,7 @@ logger.addHandler(_file_handler)
 PROFILE_UPDATE_INTERVAL = 7200     # 画像更新间隔（秒）— 每2小时一次
 PROFILE_MIN_MESSAGES = 5           # 最少发言数才触发更新
 PROFILE_MAX_TOKENS = 512           # 画像描述最大 token（曾因 256 不足导致中文截断，扩至 512）
-PROFILE_API_TIMEOUT = 20           # API 超时（秒）
+PROFILE_API_TIMEOUT = 40           # API 超时（秒）
 
 # 主模型（中科大代理，免费）
 _API_KEY = os.getenv("DECISION_API_KEY", "")
@@ -295,10 +295,8 @@ def _validate_profile(text: Optional[str]) -> bool:
     for kw in _CONTENT_ERROR_KEYWORDS:
         if kw.lower() in text_lower:
             return False
-    # 检查句子完整性：必须以降噪性标点结尾，防止被 max_tokens 截断
-    if not text_stripped.endswith(('。', '！', '？', '」', '）', ')')):
-        logger.warning("画像内容不完整（未以句号/感叹号/问号结尾），拒绝保存")
-        return False
+    # 注：之前有标点结尾校验（'。！？」）)'），已移除——它拒绝了很多有效内容
+    # 剩余的空/长度/关键词校验已足够保护画像质量
     return True
 
 
