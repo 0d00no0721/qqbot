@@ -2,6 +2,7 @@
 
 | 版本 | 内容 |
 |------|------|
+| **2.2.3.2** | 新增 requirements.txt，修复 .env.example 与实际代码不匹配，CLAUDE.md 改名为 KUN.md 并完善快速参考文档 |
 | **2.2.3** | 修复画像模块低成功率：PROFILE_API_TIMEOUT 20s→40s，移除 _validate_profile 标点结尾校验 |
 | **test-agent** | Agent 功能测试：验证 git tag 推送流程 |
 | **2.2.2.1** | NapCat UTF-8 启动方式，解决控制台中文乱码 |
