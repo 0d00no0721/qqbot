@@ -39,7 +39,7 @@ _mystery_processing = False
 BOT_QQ = "2668851638"
 DATA_FILE = os.path.join(SCRIPT_DIR, "menu_data.json")
 
-VERSION = "2.2.3"
+VERSION = "2.2.3.2"
 
 # DeepSeek / Yau
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
