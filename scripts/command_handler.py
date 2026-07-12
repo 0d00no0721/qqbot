@@ -39,7 +39,7 @@ _mystery_processing = False
 BOT_QQ = "2668851638"
 DATA_FILE = os.path.join(SCRIPT_DIR, "menu_data.json")
 
-VERSION = "2.2.3.2"
+VERSION = "2.2.4"
 
 # DeepSeek / Yau
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
@@ -1243,6 +1243,8 @@ COMMANDS = [
     ("像素画", "（需同时发送图片）将图片转为像素风格并生成 LaTeX 表格文件"),
     ("钢琴 <SimPiano曲谱>", "将曲谱转换为钢琴音频文件（WAV）发送"),
     ("test", "测试主模型和备用模型的 API 连通性"),
+    ("查看人设", "查看当前角色的人设文件（发送文件）"),
+    ("设置人设", "（管理员）设置当前角色的说话人设，格式：设置人设 + 五段式人设文本"),
     ("添加记忆 <自然语言>", "向当前群添加角色记忆（需启用角色）"),
     ("删除记忆 <关键词>", "删除包含关键词的群记忆（管理员可用）"),
     ("查看记忆", "查看当前群的角色记忆文件（发送文件）"),
@@ -1283,9 +1285,11 @@ HELP_CATEGORIES = {
     "角色": {
         "title": "角色与记忆管理",
         "commands": [
-            ("添加记忆 <自然语言>", "向当前角色添加记忆（需启用角色）"),
-            ("删除记忆 <关键词>", "删除包含关键词的记忆（管理员可用）"),
-            ("查看记忆", "列出当前角色的所有记忆"),
+            ("查看人设", "查看当前角色的人设文件"),
+            ("设置人设", "（管理员）设置当前角色的说话人设，格式：设置人设 <五段式人设文本>"),
+            ("添加记忆 <自然语言>", "向当前群添加角色记忆（需启用角色）"),
+            ("删除记忆 <关键词>", "删除包含关键词的群记忆（管理员或不越权删除）"),
+            ("查看记忆", "列出当前角色的通用记忆+群记忆"),
             ("切换角色 <角色名>", "切换到指定角色（管理员可用）"),
             ("角色列表", "列出所有可用角色"),
             ("启用角色", "启用角色模式（管理员可用）"),
@@ -1349,9 +1353,9 @@ def _is_command(msg):
         return True
     if msg.startswith("添加记忆") or msg.startswith("删除记忆"):
         return True
-    if msg in ("查看记忆", "角色列表", "启用角色", "停用角色"):
+    if msg in ("查看记忆", "查看人设", "角色列表", "启用角色", "停用角色"):
         return True
-    if msg.startswith("切换角色"):
+    if msg.startswith("切换角色") or msg.startswith("设置人设"):
         return True
     if msg.startswith("切换模型") or msg.startswith("切模型"):
         return True
@@ -1825,13 +1829,24 @@ async def handle_command(websocket, data: dict, clean_message: str, raw_message:
         # 操作群专属记忆
         memories = decision_engine.load_group_memories(char_name, gid_str)
         deleted = 0
+        is_admin = _is_admin(uid_str)
         for cat in list(memories.keys()):
             original_count = len(memories[cat])
-            memories[cat] = [
-                item for item in memories[cat]
-                if rest not in (item.get("text") if isinstance(item, dict) else item)
-                or not (_is_admin(uid_str) or (isinstance(item, dict) and item.get("by") == uid_str))
-            ]
+            new_items = []
+            for item in memories[cat]:
+                item_text = item.get("text") if isinstance(item, dict) else item
+                # 关键词不匹配 → 保留
+                if rest not in item_text:
+                    new_items.append(item)
+                    continue
+                # 关键词匹配 → 检查删除权限
+                can_delete = is_admin or (
+                    isinstance(item, dict) and item.get("by") == uid_str
+                )
+                if not can_delete:
+                    new_items.append(item)  # 无权限，保留
+                # 有权限 → 不加入 new_items（即删除）
+            memories[cat] = new_items
             deleted += original_count - len(memories[cat])
         decision_engine.save_group_memories(char_name, gid_str, memories)
         await send_message_fn(websocket, group_id, f"已删除 {deleted} 条匹配的群记忆", at_user=uid_str)
@@ -1915,6 +1930,70 @@ async def handle_command(websocket, data: dict, clean_message: str, raw_message:
         await send_message_fn(websocket, group_id, f"已发送「{char_display}」的记忆文件", at_user=uid_str)
         # 清理临时文件
         os.remove(tmp_file)
+        return True
+
+    # ===== 查看人设 =====
+    if clean_message == "查看人设":
+        active_cfg = decision_engine.get_active_character()
+        if not active_cfg.get("enabled"):
+            await send_message_fn(websocket, group_id, "角色模式未启用", at_user=uid_str)
+            return True
+        gid_str = str(group_id)
+        char_name = decision_engine.get_character_for_group(gid_str)
+        if not char_name:
+            await send_message_fn(websocket, group_id, "当前群未配置角色", at_user=uid_str)
+            return True
+        persona_text = decision_engine.get_character_persona(char_name)
+        if not persona_text:
+            await send_message_fn(websocket, group_id, f"角色「{char_name}」没有人设文件", at_user=uid_str)
+            return True
+        char_info = decision_engine.get_character_info(char_name)
+        char_display = char_info.get("name", char_name) if char_info else char_name
+
+        # 写入临时文件并发送
+        tmp_dir = os.path.join(SCRIPT_DIR, "logs")
+        tmp_file = os.path.join(tmp_dir, f"persona_{char_name}_{gid_str}.txt")
+        line_count = persona_text.count('\n') + 1
+        char_count = len(persona_text)
+        with open(tmp_file, "w", encoding="utf-8") as f:
+            f.write(persona_text)
+        await send_group_file_fn(websocket, group_id, tmp_file)
+        await send_message_fn(websocket, group_id,
+            f"已发送「{char_display}」的人设文件（{line_count} 行，{char_count} 字）", at_user=uid_str)
+        os.remove(tmp_file)
+        return True
+
+    # ===== 设置人设（管理员） =====
+    if clean_message.startswith("设置人设"):
+        rest = clean_message[4:].strip()
+        if not rest:
+            await send_message_fn(websocket, group_id,
+                "请提供人设文本。格式：\n设置人设\n## 核心身份\n...\n\n## 语言风格\n- ...\n\n## 行为准则\n- ...\n\n## 情绪反应\n...\n\n## 互动策略\n...",
+                at_user=uid_str)
+            return True
+        if not _is_admin(uid_str):
+            await send_message_fn(websocket, group_id, "只有管理员可以设置人设", at_user=uid_str)
+            return True
+        gid_str = str(group_id)
+        char_name = decision_engine.get_character_for_group(gid_str)
+        if not char_name:
+            await send_message_fn(websocket, group_id, "当前群未配置角色，无法设置人设", at_user=uid_str)
+            return True
+
+        # 验证五段式结构（至少包含核心三段标题）
+        required_sections = ["## 核心身份", "## 语言风格", "## 行为准则"]
+        missing = [s for s in required_sections if s not in rest]
+        if missing:
+            await send_message_fn(websocket, group_id,
+                f"人设缺少必需段落：{', '.join(missing)}。请使用五段式格式。", at_user=uid_str)
+            return True
+
+        decision_engine.set_character_persona(char_name, rest)
+        char_count = len(rest)
+        char_info = decision_engine.get_character_info(char_name)
+        char_display = char_info.get("name", char_name) if char_info else char_name
+        await send_message_fn(websocket, group_id,
+            f"已更新「{char_display}」的人设（{char_count} 字）", at_user=uid_str)
         return True
 
     # ===== 切换角色 =====
