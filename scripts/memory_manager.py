@@ -363,24 +363,54 @@ def cmd_create():
     with open(os.path.join(char_dir, "info.json"), "w", encoding="utf-8") as f:
         json.dump(info, f, ensure_ascii=False, indent=2)
 
-    # 创建 persona.txt
-    print("\n角色人设（system prompt，将作为 AI 回复的基础指令）：")
-    print("输入多行文本，空行结束：")
-    lines = []
-    while True:
-        line = input("> ").strip()
-        if not line:
-            break
-        lines.append(line)
-    persona = "\n".join(lines) if lines else "你是一个群聊机器人。请根据对话自然地接话。"
-    with open(os.path.join(char_dir, "persona.txt"), "w", encoding="utf-8") as f:
-        f.write(persona)
+    # 创建 persona.txt（五段式模板）
+    print("\n现在设置角色人设（五段式格式）：")
+    print("  输入 /skip 跳过某段，用默认占位内容")
+    print()
 
-    # 创建空的 memories.json
-    save_memories(char_name, {})
+    sections = {
+        "核心身份": "你是一个角色扮演bot。",
+        "语言风格": "- 用自然口语回复，一般 1~3 句话\n- 不使用 Markdown 格式\n- 不模仿任何特定角色",
+        "行为准则": "- 有礼貌、不骂人\n- 不确定怎么回时，简短地问一句\n- 不要说「作为AI...」等出戏的话",
+        "情绪反应": "保持温和友善。",
+        "互动策略": "日常闲聊时自然地回应。有人提问时简短回答。有人求助时给实用建议。",
+    }
+    persona_parts = []
+    for title, default_text in sections.items():
+        print(f"【## {title}】")
+        preview = default_text[:60] + ('...' if len(default_text) > 60 else '')
+        print(f"  默认: {preview}")
+        lines = []
+        print(f"  输入内容（多行，空行结束，或输入 /skip 使用默认值）:")
+        while True:
+            line = input("  > ").strip()
+            if not line:
+                break
+            if line == "/skip":
+                lines = [default_text]
+                break
+            lines.append(line)
+        content = "\n".join(lines) if lines else default_text
+        persona_parts.append(f"## {title}\n{content}")
+        print()
+
+    persona_text = "\n\n".join(persona_parts)
+    with open(os.path.join(char_dir, "persona.txt"), "w", encoding="utf-8") as f:
+        f.write(persona_text)
+
+    # 创建空的记忆目录结构
+    memories_dir = os.path.join(char_dir, "memories")
+    os.makedirs(os.path.join(memories_dir, "character"), exist_ok=True)
+    os.makedirs(os.path.join(memories_dir, "group"), exist_ok=True)
+    with open(os.path.join(memories_dir, "character", "default.json"), "w", encoding="utf-8") as f:
+        json.dump({}, f, ensure_ascii=False, indent=2)
 
     print(f"\n角色「{char_name}」已创建。")
-    print(f"文件：{char_dir}/")
+    print(f"目录：{char_dir}/")
+    print(f"  - info.json         角色基本信息")
+    print(f"  - persona.txt       角色人设（五段式）")
+    print(f"  - memories/character/default.json  通用记忆")
+    print(f"  - memories/group/                  群专属记忆")
 
 
 def cmd_import_profiles(char_name: str):
@@ -416,7 +446,17 @@ def cmd_import_profiles(char_name: str):
     print("  2. 逐条选择（调用 LLM 分类）")
     method = input("选择 (1/2): ").strip()
 
-    memories = load_memories(char_name)
+    # 使用群专属记忆而非角色通用记忆
+    group_mem_path = os.path.join(CHARACTERS_DIR, char_name, "memories", "group", f"{gid}.json")
+    os.makedirs(os.path.dirname(group_mem_path), exist_ok=True)
+    if os.path.exists(group_mem_path):
+        try:
+            with open(group_mem_path, "r", encoding="utf-8") as f:
+                memories = json.load(f)
+        except Exception:
+            memories = {}
+    else:
+        memories = {}
 
     if method == "1":
         if "knowledge" not in memories:
@@ -432,8 +472,9 @@ def cmd_import_profiles(char_name: str):
                     "by": "profiles",
                 })
                 imported += 1
-        save_memories(char_name, memories)
-        print(f"已导入 {imported} 条画像为 knowledge 记忆。")
+        with open(group_mem_path, "w", encoding="utf-8") as f:
+            json.dump(memories, f, ensure_ascii=False, indent=2)
+        print(f"已导入 {imported} 条画像为群专属 knowledge 记忆。")
     else:
         # 逐条 LLM 分类
         print("正在逐条分类，可能需要较长时间...")
@@ -457,10 +498,80 @@ def cmd_import_profiles(char_name: str):
                 else:
                     print(f"  ✗ 分类失败: {uid}")
                 await asyncio.sleep(0.5)
-            save_memories(char_name, memories)
-            print(f"共导入 {imported} 条画像记忆。")
+            with open(group_mem_path, "w", encoding="utf-8") as f:
+                json.dump(memories, f, ensure_ascii=False, indent=2)
+            print(f"共导入 {imported} 条画像到群专属记忆。")
 
         asyncio.run(_do_import())
+
+
+def cmd_persona_manage(char_name: str):
+    """查看/编辑角色 Persona"""
+    persona_file = os.path.join(CHARACTERS_DIR, char_name, "persona.txt")
+    if not os.path.exists(persona_file):
+        print(f"角色「{char_name}」没有人设文件。")
+        return
+
+    with open(persona_file, "r", encoding="utf-8") as f:
+        current = f.read()
+
+    print(f"\n--- 「{char_name}」当前人设 ---")
+    print(current)
+    print("--- 结束 ---\n")
+
+    print("操作选项：")
+    print("  1. 查看（已显示）")
+    print("  2. 全部替换")
+    print("  3. 编辑某一节")
+    print("  0. 返回")
+
+    choice = input("选择: ").strip()
+    if choice == "2":
+        print("请输入完整的新人设（五段式，Ctrl+Z 结束输入）：")
+        lines = []
+        try:
+            while True:
+                line = input()
+                lines.append(line)
+        except (EOFError, KeyboardInterrupt):
+            pass
+        new_text = "\n".join(lines)
+        if new_text.strip():
+            with open(persona_file, "w", encoding="utf-8") as f:
+                f.write(new_text)
+            print("人设已全部替换。")
+    elif choice == "3":
+        sections_list = ["核心身份", "语言风格", "行为准则", "情绪反应", "互动策略"]
+        print("可编辑的段落：")
+        for i, sec in enumerate(sections_list):
+            print(f"  {i + 1}. {sec}")
+        sec_choice = input("选择段落编号: ").strip()
+        if sec_choice.isdigit():
+            idx = int(sec_choice) - 1
+            if 0 <= idx < len(sections_list):
+                sec_title = sections_list[idx]
+                print(f"请输入新的「{sec_title}」内容（多行，空行结束）：")
+                lines = []
+                while True:
+                    line = input("> ").strip()
+                    if not line:
+                        break
+                    lines.append(line)
+                if lines:
+                    new_section = f"## {sec_title}\n" + "\n".join(lines)
+                    import re
+                    pattern = rf"## {re.escape(sec_title)}\n.*?(?=\n## |\Z)"
+                    new_text = re.sub(pattern, new_section, current, flags=re.DOTALL)
+                    if new_text != current:
+                        with open(persona_file, "w", encoding="utf-8") as f:
+                            f.write(new_text)
+                        print(f"「{sec_title}」已更新。")
+                    else:
+                        print("未找到该段落，请使用「全部替换」。")
+                else:
+                    print("取消编辑。")
+            else:
+                print("无效编号。")
 
 
 def cmd_enable():
@@ -506,6 +617,7 @@ def main():
         print("  7. 导入用户画像到记忆")
         print("  8. 启用角色模式")
         print("  9. 停用角色模式")
+        print("  A. 查看/编辑人设")
         print("  0. 退出")
 
         choice = input("\n选择: ").strip()
@@ -546,6 +658,11 @@ def main():
             cmd_enable()
         elif choice == "9":
             cmd_disable()
+        elif choice.upper() == "A":
+            if not char_name:
+                print("请先切换角色。")
+                continue
+            cmd_persona_manage(char_name)
         elif choice == "0":
             print("再见。")
             break

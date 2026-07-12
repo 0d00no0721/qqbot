@@ -2,6 +2,7 @@
 
 | 版本 | 内容 |
 |------|------|
+| **2.2.4** | Persona 五段式重构：分离「行为指令」与「事实知识」。角色 persona.txt 改为五段式（核心身份/语言风格/行为准则/情绪反应/互动策略），记忆文件清理去重（knowledge 52→6 条，28KB→7.9KB），新增「查看人设」「设置人设」指令，删除记忆权限逻辑重构，memory_manager 角色创建流程改为五段式模板 + Persona 逐段编辑，画像导入目标修正为群专属记忆 |
 | **2.2.3.2** | 新增 requirements.txt，修复 .env.example 与实际代码不匹配，CLAUDE.md 改名为 KUN.md 并完善快速参考文档 |
 | **2.2.3** | 修复画像模块低成功率：PROFILE_API_TIMEOUT 20s→40s，移除 _validate_profile 标点结尾校验 |
 | **test-agent** | Agent 功能测试：验证 git tag 推送流程 |

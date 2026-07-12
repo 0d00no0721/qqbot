@@ -296,6 +296,14 @@ class DecisionEngine:
         if not persona_text:
             persona_text = self._load_persona()
 
+        # 指令强化分隔符：告诉 LLM 以上是行为指令（必须遵循），以下是背景知识（仅供参考）
+        persona_text += (
+            "\n\n---\n"
+            "以上是你的角色设定和说话规则。你必须严格遵守其中的语言风格和行为准则。"
+            "接下来提供的是你的角色记忆和群聊背景知识——这些是供你参考的信息，"
+            "用于了解你「知道什么」，但不应改变你「怎么说话」。"
+        )
+
         # 加载角色通用记忆
         char_memories = self.load_memories(char_name)
         char_memories_formatted = self._format_memories(char_memories)
@@ -557,6 +565,29 @@ class DecisionEngine:
             "config",
         )
         return os.path.join(config_dir, "characters", char_name)
+
+    @staticmethod
+    def get_character_persona(char_name: str) -> str:
+        """读取角色 persona.txt，返回文本内容。文件不存在或读取失败时返回空字符串。"""
+        persona_file = os.path.join(
+            DecisionEngine.get_character_dir(char_name), "persona.txt"
+        )
+        if os.path.exists(persona_file):
+            try:
+                with open(persona_file, "r", encoding="utf-8") as f:
+                    return f.read().strip()
+            except Exception:
+                pass
+        return ""
+
+    @staticmethod
+    def set_character_persona(char_name: str, text: str):
+        """写入角色 persona.txt。自动创建角色目录（若不存在）。"""
+        char_dir = DecisionEngine.get_character_dir(char_name)
+        os.makedirs(char_dir, exist_ok=True)
+        persona_file = os.path.join(char_dir, "persona.txt")
+        with open(persona_file, "w", encoding="utf-8") as f:
+            f.write(text)
 
     @staticmethod
     def load_memories(char_name: str) -> dict:
