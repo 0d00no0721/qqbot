@@ -6,7 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 QQ 群机器人项目。基于 OneBot V11 协议，使用 NapCat 作为 QQ 客户端。群号 `755471390`，机器人 QQ `2668851638`。部署在 Windows 环境。
 
-v2.0.0 重构：指令逻辑已从 `reverse_bot.py`（483 行）拆出到 `scripts/command_handler.py`（2061 行）。`reverse_bot.py` 仅保留 WS 服务端、决策引擎调用、+1 复读、后台任务。
+v2.0.0 重构：指令逻辑已从 `reverse_bot.py`（483 行）拆出到 `scripts/command_handler.py`（~2160 行）。`reverse_bot.py` 仅保留 WS 服务端、决策引擎调用、+1 复读、后台任务。
+
+v2.3.0 新增虚拟股市板块：`scripts/virtual_stock/` 独立包，8 支股票 × 群聊指标定价，AMM 做市商，做多/做空/3倍杠杆/熔断/拆股/分红，一群一盘独立隔离。群主 QQ `408754232` 硬编码。
 
 决策引擎通过子进程调用模型脚本，多模型故障转移，故障转移和用户画像模块均走 OpenAI 协议（`/v1/chat/completions`）。
 
@@ -68,6 +70,18 @@ E:\QQbot/
 │   ├── nekosia_image.py          # 猫娘图片（Nekosia API）
 │   ├── pixiv_helper.py           # Pixiv 排行榜图片（PHPSESSID 鉴权）
 │   ├── download_model.py         # HF 模型预下载
+│   ├── virtual_stock/            # 虚拟股市板块（独立包）
+│   │   ├── __init__.py           # 包入口 — 对外API（on_message/handle_vs_command/start_scheduler）
+│   │   ├── data.py               # 数据层 — 群隔离、账户、股价持久化
+│   │   ├── engine.py             # 定价引擎 — 8股各自算法（群主发言占比/水群频率/关键词匹配等）
+│   │   ├── account.py            # 账户管理 — 余额/体力/杠杆/做空/破产恢复
+│   │   ├── market.py             # 交易系统 — AMM做市商/买卖/手续费/熔断检查
+│   │   ├── risk.py               # 风控 — 保证金率/爆仓强平/熔断
+│   │   ├── events.py             # 事件 — 拆股/分红/收盘/富豪榜
+│   │   ├── commands.py           # 指令处理 — 行情/买入/卖出/做空/持仓等
+│   │   ├── scheduler.py          # 定时任务 — 8个后台协程（股价刷新/爆仓/拆股/体力/日息/榜单/收盘/分红）
+│   │   ├── DESIGN.md             # 设计文档
+│   │   └── data/                 # 运行时数据（按群隔离）
 │   └── test_*.py                 # 测试脚本
 │
 ├── config/
@@ -148,7 +162,23 @@ E:\QQbot/
 分层帮助：
 - `帮助` / `help` → 类别一行式概览
 - `[类别]帮助` → 子类别详细命令列表
-- 类别：菜单、小巧思、角色、系统、日常
+- 类别：菜单、小巧思、角色、系统、日常、股市
+
+## Virtual Stock (scripts/virtual_stock/)
+
+v2.3.0 新增虚拟股市板块。独立 Python 包，按群隔离（一群一盘）。
+
+- **8 支股票**：600001 群主控股（群主发言占比指标）、300001 水群地产、300002 情绪过山车、30003A/30003B CP双子星、000001 潜水者指数、100001 战雷航空、100002 军武游戏、900001 周末效应
+- **群主 QQ**：`408754232`，硬编码在 `data.py` 常量 `OWNER_QQ`
+- **AMM 做市商**：买卖价差 1%（买价=现价×1.005, 卖价=现价×0.995）
+- **交易机制**：做多/做空/3倍杠杆+爆仓/体力值（上限10，30min恢复1点）
+- **风控**：单股1小时涨跌超30%或大盘跌超15%触发熔断；保证金率≤10%强平
+- **定时任务**：调度器8个协程 — 股价刷新(10min)/爆仓检查(10min)/拆股检查(10min)/体力恢复(30min)/日息(00:00)/富豪榜(00:05)/收盘(23:30)/周分红(周日22:00)
+- **数据隔离**：`scripts/virtual_stock/data/group_{群号}/` 目录，config.json + prices.json + accounts/{user_id}.json
+- **集成方式**：
+  - `reverse_bot.py` 导入 `on_message` 采集所有群消息指标，启动调度器
+  - `command_handler.py` 在 `handle_command()` 开头检查 `_vs_is_command()` 分发虚拟股指令
+  - 调度器广播通过 `current_websocket` 发送群消息
 
 ## Active Model
 
@@ -157,4 +187,4 @@ E:\QQbot/
 
 ## Version Convention
 
-`VERSION` 遵循 `主版本.次版本.修订号`。当前 `2.2.2`。
+`VERSION` 遵循 `主版本.次版本.修订号`。当前 `2.3.0`。
