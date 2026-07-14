@@ -39,6 +39,7 @@
 | `nekosia_image.py` | 猫娘图片（Nekosia API） |
 | `pixiv_helper.py` | Pixiv 排行榜图片（PHPSESSID 鉴权） |
 | `download_model.py` | HF 模型预下载 |
+| `virtual_stock/` | **虚拟股市** — 独立板块（8股×定价算法·AMM做市商·杠杆做空·熔断拆股·分红·一群一盘） |
 
 ### config/ 配置
 
@@ -87,15 +88,16 @@ PYTHONIOENCODING=utf-8 ".\venv\Scripts\python" scripts/download_model.py
 
 ## 📌 当前状态
 
-- **版本**：2.2.4（Persona 五段式重构）
+- **版本**：2.3.0（虚拟股市板块上线）
 - **活跃模型**：`deepseek-v4-pro`（中科大代理）
 - **角色**：`soyo nagasaki`（长崎素世，已启用）
 - **群角色映射**：`group_characters.json` → 群 755471390 绑定 soyo
 - **记忆结构**：`memories/character/default.json`（通用，~8KB）+ `memories/group/{gid}.json`（群专属）
 - **管理员**：`784427550`
-- **帮助系统**：分层帮助（`帮助` / `[类别]帮助`）
+- **帮助系统**：分层帮助（`帮助` / `[类别]帮助`），类别：菜单、小巧思、角色、系统、日常、股市
 - **角色管理指令**：`查看人设` / `设置人设` / `添加记忆` / `删除记忆` / `查看记忆` / `切换角色` / `角色列表` / `启用角色` / `停用角色`
+- **虚拟股市**：8 支股票 × 群聊指标定价，AMM 做市商，做多/做空/杠杆/熔断/拆股/分红，一群一盘独立隔离
 
 ---
 
-📅 **最后更新**：2026-07-10
+📅 **最后更新**：2026-07-14

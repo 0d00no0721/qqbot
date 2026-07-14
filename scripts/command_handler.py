@@ -39,7 +39,13 @@ _mystery_processing = False
 BOT_QQ = "2668851638"
 DATA_FILE = os.path.join(SCRIPT_DIR, "menu_data.json")
 
-VERSION = "2.2.4"
+VERSION = "2.3.0"
+
+# ========== 虚拟股板块 ==========
+from scripts.virtual_stock import (
+    handle_vs_command as _vs_handle,
+    is_vs_command as _vs_is_command,
+)
 
 # DeepSeek / Yau
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
@@ -1311,6 +1317,23 @@ HELP_CATEGORIES = {
             ("神秘数字", "随机召唤一个神秘数字"),
         ],
     },
+    "股市": {
+        "title": "虚拟股市",
+        "commands": [
+            ("行情", "查看全部股票行情"),
+            ("股票 <名称或代码>", "查看单支股票详情"),
+            ("买入 <名称或代码> <数量> [杠杆]", "做多买入（杠杆可选 2 或 3）"),
+            ("卖出 <名称或代码> <数量>", "卖出平多"),
+            ("做空 <名称或代码> <数量>", "融券做空"),
+            ("平空 <名称或代码> <数量>", "买回平空"),
+            ("持仓", "查看自己的持仓"),
+            ("账户", "查看余额和总资产"),
+            ("体力", "查看交易体力值"),
+            ("富豪榜", "查看富豪榜/负豪榜"),
+            ("破产恢复", "总资产低于 50 金币时申请救济"),
+            ("股市帮助", "显示股市详细帮助"),
+        ],
+    },
 }
 
 HELP_SHORT = {
@@ -1319,6 +1342,7 @@ HELP_SHORT = {
     "角色": "角色与记忆管理",
     "系统": "系统工具",
     "日常": "日常功能",
+    "股市": "虚拟股市",
 }
 
 
@@ -1369,6 +1393,9 @@ def _is_command(msg):
         return True
     if msg == "签到":
         return True
+    # 虚拟股指令
+    if _vs_is_command(msg):
+        return True
     for key in HELP_CATEGORIES:
         if msg == f"{key}帮助":
             return True
@@ -1390,6 +1417,13 @@ async def handle_command(websocket, data: dict, clean_message: str, raw_message:
             return False
         cfg = decision_engine.get_active_character()
         return uid in cfg.get("admin_ids", [])
+
+    # ===== 虚拟股指令 =====
+    if _vs_is_command(clean_message):
+        reply = _vs_handle(str(group_id), uid_str, clean_message)
+        if reply:
+            await send_message_fn(websocket, group_id, reply, at_user=uid_str)
+        return True
 
     # ===== Yau 命令 =====
     if clean_message.startswith("Yau"):

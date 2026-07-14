@@ -32,3 +32,14 @@ Thumbs.db
 
 # Local backups
 backup_pre_phase1/
+*.backup/
+*.backup
+
+# Windows artifacts
+nul
+
+# Virtual stock runtime data
+scripts/virtual_stock/data/
+
+# External reference repos
+zhouli-translator-ref/

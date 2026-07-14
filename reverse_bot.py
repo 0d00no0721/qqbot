@@ -54,6 +54,15 @@ from scripts.command_handler import (
     init_handlers,
 )
 
+# ========== 虚拟股板块 ==========
+from scripts.virtual_stock import (
+    on_message as vs_on_message,
+    init_group_data as vs_init_group,
+    start_scheduler as vs_start_scheduler,
+    stop_scheduler as vs_stop_scheduler,
+    register_group as vs_register_group,
+)
+
 # ========== 脚本所在目录 ==========
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -198,6 +207,14 @@ async def handle_message(websocket, data: dict):
     from scripts.command_handler import known_groups
     known_groups.add(str(group_id))
 
+    # ===== 虚拟股：注册群 + 采集消息指标 =====
+    gid_str = str(group_id)
+    uid_str_vs = str(user_id)
+    try:
+        vs_register_group(gid_str)
+    except Exception:
+        pass
+
     # ===== 语音消息转文字 =====
     if "[CQ:record" in raw_message:
         raw_message = await process_voice_message(raw_message)
@@ -210,6 +227,12 @@ async def handle_message(websocket, data: dict):
     # ===== 纯图片/表情消息忽略 =====
     if not clean_message:
         return
+
+    # ===== 虚拟股：采集消息指标（所有消息，不限@bot） =====
+    try:
+        vs_on_message(gid_str, uid_str_vs, clean_message, is_bot_command=bot_mentioned)
+    except Exception:
+        pass
 
     # ===== 命令处理 =====
     if bot_mentioned:
@@ -450,6 +473,21 @@ async def main():
     mystery_task = asyncio.create_task(mystery_number_task())
     background_tasks = [profile_task, mystery_task]
 
+    # ===== 虚拟股调度器 =====
+    async def vs_broadcast(group_id: str, message: str):
+        """虚拟股广播回调：通过当前 WebSocket 发送群消息。"""
+        ws = current_websocket
+        if ws is None:
+            bot_logger.warning(f"[虚拟股] WebSocket 未连接，广播到群 {group_id} 失败")
+            return
+        try:
+            await send_message(ws, int(group_id), message)
+        except Exception as e:
+            bot_logger.error(f"[虚拟股] 广播失败: {e}")
+
+    vs_start_scheduler(vs_broadcast)
+    bot_logger.info("[虚拟股] 调度器已启动（8 个定时任务）")
+
     async def custom_process_request(path, request_headers):
         return None
 
@@ -471,6 +509,7 @@ async def main():
     finally:
         server.close()
         await server.wait_closed()
+        vs_stop_scheduler()
         for task in background_tasks:
             task.cancel()
         await asyncio.gather(*background_tasks, return_exceptions=True)

@@ -1,0 +1,32 @@
+{
+  "284517232": {
+    "group_name": "",
+    "features": {
+      "decision_engine": true,
+      "plus_one": true,
+      "commands": true,
+      "newcomer_welcome": true,
+      "profile_record": true
+    }
+  },
+  "1055881417": {
+    "group_name": "",
+    "features": {
+      "decision_engine": true,
+      "plus_one": true,
+      "commands": true,
+      "newcomer_welcome": true,
+      "profile_record": true
+    }
+  },
+  "755471390": {
+    "group_name": "",
+    "features": {
+      "decision_engine": true,
+      "plus_one": true,
+      "commands": true,
+      "newcomer_welcome": true,
+      "profile_record": true
+    }
+  }
+}
