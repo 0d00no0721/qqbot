@@ -16,7 +16,7 @@
 - get_account()            — 查询用户账户（供签到联动等使用）
 - get_total_assets()       — 计算用户总资产（供签到联动等使用）
 
-版本：1.0.0
+版本：2.3.1
 """
 
 from .data import STOCK_CODES, DEFAULT_STOCK_NAMES, load_group_config, init_group_data

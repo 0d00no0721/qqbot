@@ -88,7 +88,7 @@ PYTHONIOENCODING=utf-8 ".\venv\Scripts\python" scripts/download_model.py
 
 ## 📌 当前状态
 
-- **版本**：2.3.0（虚拟股市板块上线）
+- **版本**：2.3.1（虚拟股修复：涨跌幅、初始资金、测试）
 - **活跃模型**：`deepseek-v4-pro`（中科大代理）
 - **角色**：`soyo nagasaki`（长崎素世，已启用）
 - **群角色映射**：`group_characters.json` → 群 755471390 绑定 soyo

@@ -1,0 +1,58 @@
+{
+  "owner_qq": "408754232",
+  "stocks": {
+    "600001": {
+      "total_shares": 10000,
+      "initial_price": 100.0
+    },
+    "300001": {
+      "total_shares": 10000,
+      "initial_price": 100.0
+    },
+    "300002": {
+      "total_shares": 10000,
+      "initial_price": 100.0
+    },
+    "30003A": {
+      "total_shares": 10000,
+      "initial_price": 100.0
+    },
+    "30003B": {
+      "total_shares": 10000,
+      "initial_price": 100.0
+    },
+    "000001": {
+      "total_shares": 10000,
+      "initial_price": 100.0
+    },
+    "100001": {
+      "total_shares": 10000,
+      "initial_price": 100.0
+    },
+    "100002": {
+      "total_shares": 10000,
+      "initial_price": 100.0
+    },
+    "900001": {
+      "total_shares": 10000,
+      "initial_price": 100.0
+    }
+  },
+  "dividend_rate": 0.0005,
+  "signin_bonus_rate": 0.001,
+  "leverage_max": 3,
+  "leverage_interest_rate": 0.002,
+  "stamina_max": 10,
+  "stamina_recover_interval": 1800,
+  "position_limit_ratio": 0.15,
+  "initial_balance": 10000.0,
+  "bankruptcy_threshold": 50.0,
+  "bankruptcy_recovery": 200.0,
+  "circuit_breaker_single": 0.3,
+  "circuit_breaker_market": 0.15,
+  "circuit_breaker_hours": 1,
+  "split_threshold": 1000.0,
+  "split_ratio": 10,
+  "price_floor": 1.0,
+  "refresh_interval": 600
+}

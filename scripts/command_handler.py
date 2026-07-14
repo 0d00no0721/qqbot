@@ -39,7 +39,7 @@ _mystery_processing = False
 BOT_QQ = "2668851638"
 DATA_FILE = os.path.join(SCRIPT_DIR, "menu_data.json")
 
-VERSION = "2.3.0"
+VERSION = "2.3.1"
 
 # ========== 虚拟股板块 ==========
 from scripts.virtual_stock import (

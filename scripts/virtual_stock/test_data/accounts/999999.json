@@ -1,0 +1,37 @@
+{
+  "100001": {
+    "user_id": "100001",
+    "group_id": "999999",
+    "balance": 10.0,
+    "frozen_balance": 0.0,
+    "positions": {},
+    "liabilities": {},
+    "stamina": 5,
+    "stamina_updated_at": "2026-07-14T22:16:38.192756",
+    "total_trade_count": 7,
+    "bankruptcy_used_today": true,
+    "no_leverage_until": "2026-07-14T23:59:59.273522"
+  },
+  "100002": {
+    "user_id": "100002",
+    "group_id": "999999",
+    "balance": 3063.2,
+    "frozen_balance": 0.0,
+    "positions": {
+      "600001": {
+        "stock_code": "600001",
+        "quantity": 0,
+        "avg_cost": 0.0,
+        "leveraged_quantity": 50,
+        "leverage_multiplier": 3,
+        "debt": 3421.49
+      }
+    },
+    "liabilities": {},
+    "stamina": 0,
+    "stamina_updated_at": "2026-07-14T22:16:38.257181",
+    "total_trade_count": 2,
+    "bankruptcy_used_today": false,
+    "no_leverage_until": null
+  }
+}

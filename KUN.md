@@ -7,7 +7,7 @@
 - 机器人 QQ：`2668851638`
 - 主群：`755471390`，二号机群：`284517232`
 - 管理员：`784427550`
-- 当前版本：`2.2.4`
+- 当前版本：`2.3.1`
 - 当前角色：`soyo nagasaki`（长崎素世）
 - 当前模型：`deepseek-v4-flash-ascend`（中科大代理）
 
@@ -395,7 +395,7 @@ qwen3.6-chat, qwen3.6-reasoner
 | 常量 | 值 | 位置 |
 |------|-----|------|
 | `BOT_QQ` | `"2668851638"` | command_handler.py |
-| `VERSION` | `"2.2.4"` | command_handler.py |
+| `VERSION` | `"2.3.1"` | command_handler.py |
 | `HOST` | `"0.0.0.0"` | reverse_bot.py |
 | `PORT` | `8080` | reverse_bot.py |
 | `PROCESSED_MSG_MAX` | `200` | command_handler.py |
@@ -442,6 +442,8 @@ qwen3.6-chat, qwen3.6-reasoner
 | 2.0.1 | API Key 全部迁移至 .env |
 | 2.1.0 | 多群多角色多记忆 |
 | 2.2.0 | 周礼模块 |
+| 2.3.0 | 虚拟股市板块上线：`scripts/virtual_stock/` 独立包，8 支股票 × 群聊指标定价，AMM 做市商，做多/做空/杠杆/熔断/拆股/分红，一群一盘 |
+| 2.3.1 | 虚拟股修复：涨跌幅不再恒为零（prev_close 初始化缺失），初始资金 1000→10000，48 项单元测试全覆盖 |
 | 2.2.4 | Persona 五段式重构：分离行为指令与事实知识，新增「查看/设置人设」指令，记忆清理去重（28KB→8KB），memory_manager 五段式模板 |
 | 2.2.3 | 画像超时 20s→40s，移除标点校验 |
 

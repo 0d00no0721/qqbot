@@ -31,8 +31,8 @@ print("2. command_handler 源码验证（绕过 jmcomic 依赖）")
 print("=" * 60)
 with open("scripts/command_handler.py", "r", encoding="utf-8") as f:
     ch_src = f.read()
-assert 'VERSION = "2.3.0"' in ch_src, "版本号不是 2.3.0"
-print('  ✅ VERSION = "2.3.0"')
+assert 'VERSION = "2.3.1"' in ch_src, "版本号不是 2.3.1"
+print('  ✅ VERSION = "2.3.1"')
 assert "from scripts.virtual_stock import" in ch_src, "缺少 virtual_stock 导入"
 print("  ✅ virtual_stock 导入存在")
 assert "_vs_is_command(clean_message)" in ch_src, "缺少指令分发"

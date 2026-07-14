@@ -57,7 +57,7 @@ DEFAULT_GROUP_CONFIG = {
     "stamina_max": 10,              # 体力值上限
     "stamina_recover_interval": 1800,  # 体力恢复间隔（秒）
     "position_limit_ratio": 0.15,   # 单股持仓上限比例
-    "initial_balance": 1000.0,      # 新账户初始金币
+    "initial_balance": 10000.0,     # 新账户初始金币
     "bankruptcy_threshold": 50.0,   # 破产线
     "bankruptcy_recovery": 200.0,   # 破产恢复金
     "circuit_breaker_single": 0.30,  # 单股熔断阈值
@@ -275,6 +275,7 @@ def _make_initial_price_data(config: Dict[str, Any]) -> Dict[str, Any]:
 
     return {
         "current": current,
+        "prev_close": dict(current),
         "history": history,
         "all_time_high": all_time_high,
         "circuit_breaker": {code: None for code in STOCK_CODES},
