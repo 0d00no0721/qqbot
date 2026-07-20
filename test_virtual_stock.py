@@ -123,7 +123,7 @@ ensure_empty()
 config = init_group_data(TEST_GROUP, owner_qq=USER_OWNER)
 test("init_group_data: config 创建成功", config is not None)
 test("owner_qq 正确", config.get("owner_qq") == USER_OWNER)
-test("初始余额正确", config.get("initial_balance") == 1000.0)
+test("初始余额正确", config.get("initial_balance") == 10000.0)
 
 # 1.2 检查价格数据
 prices = load_prices(TEST_GROUP)
@@ -135,7 +135,7 @@ test("初始化价格均为 100.0",
 # 1.3 账户创建
 account_a = get_or_create_account(TEST_USER_A, TEST_GROUP)
 test("账户 A 创建成功", account_a is not None)
-test("A 初始余额 1000", account_a.get("balance") == 1000.0)
+test("A 初始余额 10000", account_a.get("balance") == 10000.0)
 test("A 初始体力 10", account_a.get("stamina") == 10)
 test("A 无持仓", len(account_a.get("positions", {})) == 0)
 
@@ -177,7 +177,7 @@ test_messages = [
     (TEST_USER_B, "#行情", True),
     (TEST_USER_A, "#签到", True),
     (TEST_USER_B, "#股市帮助", True),
-    (TEST_USER_OWNER, "最近群里好活跃啊继续保持", False),
+    (USER_OWNER, "最近群里好活跃啊继续保持", False),
     (TEST_USER_A, "[CQ:forward,id=123]", False),             # 合并转发
     (TEST_USER_B, "我发个经典群聊复刻", False),
 ]

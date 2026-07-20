@@ -304,7 +304,7 @@ def _cmd_portfolio(group_id: str, user_id: str) -> str:
             name = DEFAULT_STOCK_NAMES.get(code, code)
             qty = pos["quantity"]
             avg_cost = pos.get("avg_cost", 0)
-            leverage = pos.get("leverage", 1)
+            leverage = pos.get("leverage_multiplier", 1)
             # 当前市值
             info = get_stock_info(group_id, code)
             cur_price = info["price"]
@@ -321,19 +321,19 @@ def _cmd_portfolio(group_id: str, user_id: str) -> str:
 
     has_liability = False
     for code, liab in liabilities.items():
-        if liab.get("quantity", 0) > 0:
+        if liab.get("short_quantity", 0) > 0:
             has_liability = True
             name = DEFAULT_STOCK_NAMES.get(code, code)
-            qty = liab["quantity"]
-            borrow_price = liab.get("borrow_price", 0)
+            qty = liab["short_quantity"]
+            short_price = liab.get("short_price", 0)
             info = get_stock_info(group_id, code)
             cur_price = info["price"]
-            pnl = (borrow_price - cur_price) * qty
-            pnl_pct = ((borrow_price - cur_price) / borrow_price * 100) if borrow_price > 0 else 0
+            pnl = (short_price - cur_price) * qty
+            pnl_pct = ((short_price - cur_price) / short_price * 100) if short_price > 0 else 0
 
             lines.append(
                 f"  {code} {name} [做空]\n"
-                f"    借入: {qty}股  借入价: {borrow_price:.2f}  现价: {cur_price:.2f}\n"
+                f"    借入: {qty}股  借入价: {short_price:.2f}  现价: {cur_price:.2f}\n"
                 f"    盈亏: {pnl:+.2f} ({pnl_pct:+.2f}%)"
             )
 
@@ -359,9 +359,9 @@ def _cmd_account(group_id: str, user_id: str) -> str:
             info = get_stock_info(group_id, code)
             long_val += pos["quantity"] * info["price"]
     for code, liab in liabilities.items():
-        if liab.get("quantity", 0) > 0:
+        if liab.get("short_quantity", 0) > 0:
             info = get_stock_info(group_id, code)
-            short_val += liab["quantity"] * info["price"]
+            short_val += liab["short_quantity"] * info["price"]
 
     lines = [
         f"💰 **【{user_id} 的账户】**",

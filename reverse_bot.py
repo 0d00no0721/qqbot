@@ -54,17 +54,57 @@ from scripts.command_handler import (
     init_handlers,
 )
 
+# ========== 功能开关：虚拟股市 ==========
+VS_ENABLED = False  # 设为 True 启用虚拟股市板块
+
 # ========== 虚拟股板块 ==========
-from scripts.virtual_stock import (
-    on_message as vs_on_message,
-    init_group_data as vs_init_group,
-    start_scheduler as vs_start_scheduler,
-    stop_scheduler as vs_stop_scheduler,
-    register_group as vs_register_group,
-)
+if VS_ENABLED:
+    from scripts.virtual_stock import (
+        on_message as vs_on_message,
+        init_group_data as vs_init_group,
+        start_scheduler as vs_start_scheduler,
+        stop_scheduler as vs_stop_scheduler,
+        register_group as vs_register_group,
+    )
 
 # ========== 脚本所在目录 ==========
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# ========== 群功能开关（读取 config/group_features.json） ==========
+import threading
+_features_cache: dict = {"data": None, "mtime": 0.0}
+_features_lock = threading.Lock()
+_FEATURES_FILE = os.path.join(SCRIPT_DIR, "config", "group_features.json")
+_FEATURE_KEYS = ("decision_engine", "plus_one", "commands", "newcomer_welcome", "profile_record")
+
+
+def _get_group_features(gid: str) -> dict:
+    """读取某群的功能开关，带文件 mtime 缓存。未配置的群返回空 dict。"""
+    try:
+        mtime = os.path.getmtime(_FEATURES_FILE)
+    except OSError:
+        return {}
+    with _features_lock:
+        if _features_cache["data"] is None or mtime != _features_cache["mtime"]:
+            try:
+                with open(_FEATURES_FILE, "r", encoding="utf-8") as f:
+                    _features_cache["data"] = json.load(f)
+                _features_cache["mtime"] = mtime
+            except (OSError, json.JSONDecodeError):
+                return {}
+        entry = _features_cache["data"].get(gid, {})
+    if not isinstance(entry, dict):
+        return {}
+    feat = entry.get("features", {})
+    return feat if isinstance(feat, dict) else {}
+
+
+def _feature_on(gid: str, key: str) -> bool:
+    """查询某群某功能是否启用。未配置的群一律返回 False（白名单语义）。"""
+    feat = _get_group_features(gid)
+    if not feat:
+        return False
+    return bool(feat.get(key, False))
 
 # ========== 日志配置 ==========
 LOG_DIR = os.path.join(SCRIPT_DIR, "logs")
@@ -207,13 +247,18 @@ async def handle_message(websocket, data: dict):
     from scripts.command_handler import known_groups
     known_groups.add(str(group_id))
 
-    # ===== 虚拟股：注册群 + 采集消息指标 =====
+    # ===== 群功能开关：未启用的群完全不响应 =====
     gid_str = str(group_id)
+    if not any(_feature_on(gid_str, k) for k in _FEATURE_KEYS):
+        return
+
+    # ===== 虚拟股：注册群 + 采集消息指标 =====
     uid_str_vs = str(user_id)
-    try:
-        vs_register_group(gid_str)
-    except Exception:
-        pass
+    if VS_ENABLED:
+        try:
+            vs_register_group(gid_str)
+        except Exception:
+            pass
 
     # ===== 语音消息转文字 =====
     if "[CQ:record" in raw_message:
@@ -229,39 +274,40 @@ async def handle_message(websocket, data: dict):
         return
 
     # ===== 虚拟股：采集消息指标（所有消息，不限@bot） =====
-    try:
-        vs_on_message(gid_str, uid_str_vs, clean_message, is_bot_command=bot_mentioned)
-    except Exception:
-        pass
+    if VS_ENABLED:
+        try:
+            vs_on_message(gid_str, uid_str_vs, clean_message, is_bot_command=bot_mentioned)
+        except Exception:
+            pass
 
     # ===== 命令处理 =====
-    if bot_mentioned:
+    if bot_mentioned and _feature_on(gid_str, "commands"):
         handled = await handle_command(websocket, data, clean_message, raw_message)
         if handled:
             return
 
     # ===== +1 检测 =====
     gid = str(group_id)
-    plus_one_lock = await _get_plus_one_lock(gid)
-    async with plus_one_lock:
-        last_user_id, last_msg = recent_messages.get(gid, (None, None))
-        prev_repeated = repeated_messages.get(gid)
+    if _feature_on(gid_str, "plus_one"):
+        plus_one_lock = await _get_plus_one_lock(gid)
+        async with plus_one_lock:
+            last_user_id, last_msg = recent_messages.get(gid, (None, None))
+            prev_repeated = repeated_messages.get(gid)
 
-        if (
-            last_msg is not None
-            and last_msg == clean_message
-            and str(last_user_id) != str(user_id)
-            and clean_message != prev_repeated
-        ):
-            await send_message(websocket, group_id, clean_message)
-            repeated_messages[gid] = clean_message
-        elif clean_message != last_msg:
-            repeated_messages.pop(gid, None)
+            if (
+                last_msg is not None
+                and last_msg == clean_message
+                and str(last_user_id) != str(user_id)
+                and clean_message != prev_repeated
+            ):
+                await send_message(websocket, group_id, clean_message)
+                repeated_messages[gid] = clean_message
+            elif clean_message != last_msg:
+                repeated_messages.pop(gid, None)
 
-        recent_messages[gid] = (user_id, clean_message)
+            recent_messages[gid] = (user_id, clean_message)
 
     # ===== 名字/别名检测 =====
-    gid_str = str(group_id)
     clean_or_raw = clean_message or raw_message
     if not bot_mentioned:
         all_aliases = decision_engine.get_all_character_aliases()
@@ -275,40 +321,41 @@ async def handle_message(websocket, data: dict):
 
     # ===== 决策引擎 =====
     uid_str = str(user_id)
-    t_decision = time.time()
-    nickname = data.get("sender", {}).get("nickname", "")
-    try:
-        decision_engine.add_message(gid_str, uid_str, nickname, clean_or_raw)
+    if _feature_on(gid_str, "decision_engine"):
+        t_decision = time.time()
+        nickname = data.get("sender", {}).get("nickname", "")
+        try:
+            decision_engine.add_message(gid_str, uid_str, nickname, clean_or_raw)
 
-        if PROFILE_ENABLED:
-            profile_text = get_profile(gid_str, uid_str)
-            if profile_text:
-                decision_engine.add_message(gid_str, "system", "系统",
-                    f"[用户画像: {profile_text}]")
+            if PROFILE_ENABLED:
+                profile_text = get_profile(gid_str, uid_str)
+                if profile_text:
+                    decision_engine.add_message(gid_str, "system", "系统",
+                        f"[用户画像: {profile_text}]")
 
-        should_reply, reply_text = await decision_engine.should_reply(
-            message=clean_or_raw,
-            user_id=uid_str,
-            group_id=gid_str,
-            is_at_bot=bot_mentioned,
-            sender_nickname=nickname,
-        )
+            should_reply, reply_text = await decision_engine.should_reply(
+                message=clean_or_raw,
+                user_id=uid_str,
+                group_id=gid_str,
+                is_at_bot=bot_mentioned,
+                sender_nickname=nickname,
+            )
 
-        elapsed_ms = int((time.time() - t_decision) * 1000)
-        if elapsed_ms > 500:
-            bot_logger.info(f"[耗时] 决策引擎耗时 {elapsed_ms}ms (群{gid_str})")
+            elapsed_ms = int((time.time() - t_decision) * 1000)
+            if elapsed_ms > 500:
+                bot_logger.info(f"[耗时] 决策引擎耗时 {elapsed_ms}ms (群{gid_str})")
 
-        if should_reply and reply_text:
-            at_user = uid_str if bot_mentioned else None
-            await send_message(websocket, group_id, reply_text, at_user=at_user)
-            total_ms = int((time.time() - t_req) * 1000)
-            info = decision_engine.get_debug_info()
-            bot_logger.info(f"[决策] 群 {gid_str} 回复（总耗时 {total_ms}ms）| "
-                  f"密度={info.get('密度','?')} 分类={info.get('分类结果','?')} "
-                  f"阈值={info.get('阈值','?')} 决策={info.get('最终','?')}")
-    except Exception as e:
-        bot_logger.info(f"[决策引擎] 出错: {e}")
-        traceback.print_exc()
+            if should_reply and reply_text:
+                at_user = uid_str if bot_mentioned else None
+                await send_message(websocket, group_id, reply_text, at_user=at_user)
+                total_ms = int((time.time() - t_req) * 1000)
+                info = decision_engine.get_debug_info()
+                bot_logger.info(f"[决策] 群 {gid_str} 回复（总耗时 {total_ms}ms）| "
+                      f"密度={info.get('密度','?')} 分类={info.get('分类结果','?')} "
+                      f"阈值={info.get('阈值','?')} 决策={info.get('最终','?')}")
+        except Exception as e:
+            bot_logger.info(f"[决策引擎] 出错: {e}")
+            traceback.print_exc()
 
     # ===== 更新历史缓存 =====
     group_histories[gid_str].append({
@@ -318,7 +365,7 @@ async def handle_message(websocket, data: dict):
     })
 
     # ===== 用户画像：缓冲发言 =====
-    if PROFILE_ENABLED:
+    if PROFILE_ENABLED and _feature_on(gid_str, "profile_record"):
         record_message(gid_str, uid_str, clean_message or raw_message)
 
 
@@ -328,6 +375,8 @@ async def handle_group_increase(websocket, data: dict):
     new_user_id = data["user_id"]
     from scripts.command_handler import known_groups
     known_groups.add(str(group_id))
+    if not _feature_on(str(group_id), "newcomer_welcome"):
+        return
     reply = '欢迎新人~可以发送”@bot 帮助”了解更多~（记得长按头像）'
     await send_message(websocket, group_id, reply, at_user=str(new_user_id))
 
@@ -474,19 +523,20 @@ async def main():
     background_tasks = [profile_task, mystery_task]
 
     # ===== 虚拟股调度器 =====
-    async def vs_broadcast(group_id: str, message: str):
-        """虚拟股广播回调：通过当前 WebSocket 发送群消息。"""
-        ws = current_websocket
-        if ws is None:
-            bot_logger.warning(f"[虚拟股] WebSocket 未连接，广播到群 {group_id} 失败")
-            return
-        try:
-            await send_message(ws, int(group_id), message)
-        except Exception as e:
-            bot_logger.error(f"[虚拟股] 广播失败: {e}")
+    if VS_ENABLED:
+        async def vs_broadcast(group_id: str, message: str):
+            """虚拟股广播回调：通过当前 WebSocket 发送群消息。"""
+            ws = current_websocket
+            if ws is None:
+                bot_logger.warning(f"[虚拟股] WebSocket 未连接，广播到群 {group_id} 失败")
+                return
+            try:
+                await send_message(ws, int(group_id), message)
+            except Exception as e:
+                bot_logger.error(f"[虚拟股] 广播失败: {e}")
 
-    vs_start_scheduler(vs_broadcast)
-    bot_logger.info("[虚拟股] 调度器已启动（8 个定时任务）")
+        vs_start_scheduler(vs_broadcast)
+        bot_logger.info("[虚拟股] 调度器已启动（8 个定时任务）")
 
     async def custom_process_request(path, request_headers):
         return None
@@ -509,7 +559,8 @@ async def main():
     finally:
         server.close()
         await server.wait_closed()
-        vs_stop_scheduler()
+        if VS_ENABLED:
+            vs_stop_scheduler()
         for task in background_tasks:
             task.cancel()
         await asyncio.gather(*background_tasks, return_exceptions=True)
