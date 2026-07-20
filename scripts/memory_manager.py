@@ -17,6 +17,12 @@ import os
 import re
 import sys
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_DIR = os.path.dirname(SCRIPT_DIR)
 CONFIG_DIR = os.path.join(PROJECT_DIR, "config")
@@ -74,7 +80,8 @@ def list_characters() -> list:
 
 
 def load_memories(char_name: str) -> dict:
-    memories_file = os.path.join(CHARACTERS_DIR, char_name, "memories.json")
+    """加载角色通用记忆（与 decision_engine.py 路径一致）"""
+    memories_file = os.path.join(CHARACTERS_DIR, char_name, "memories", "character", "default.json")
     if not os.path.exists(memories_file):
         return {}
     try:
@@ -85,9 +92,10 @@ def load_memories(char_name: str) -> dict:
 
 
 def save_memories(char_name: str, data: dict):
-    char_dir = os.path.join(CHARACTERS_DIR, char_name)
-    os.makedirs(char_dir, exist_ok=True)
-    memories_file = os.path.join(char_dir, "memories.json")
+    """保存角色通用记忆（与 decision_engine.py 路径一致）"""
+    mem_dir = os.path.join(CHARACTERS_DIR, char_name, "memories", "character")
+    os.makedirs(mem_dir, exist_ok=True)
+    memories_file = os.path.join(mem_dir, "default.json")
     with open(memories_file, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
