@@ -150,15 +150,11 @@ def is_trading_halted(group_id: str, stock_code: str) -> Tuple[bool, str]:
     快速判断某股票是否停牌。
     返回 (是否停牌, 原因消息)。
     """
+    # check_circuit_breaker 内部已检查单股 + 全盘熔断，一次调用足够
     status = check_circuit_breaker(group_id, stock_code)
     if status.is_halted:
         reason = status.reason or "该股票已停牌"
-        return True, f"⛔ {reason}，{stock_code} 已停牌，暂时无法交易。"
-    # 也检查全盘熔断
-    status_all = check_circuit_breaker(group_id, None)
-    if status_all.is_halted:
-        reason = status_all.reason or "大盘熔断"
-        return True, f"⛔ {reason}，全盘停牌，暂时无法交易。"
+        return True, f"⛔ {reason}，暂时无法交易。"
     return False, ""
 
 

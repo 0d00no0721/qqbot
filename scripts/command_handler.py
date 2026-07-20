@@ -41,11 +41,15 @@ DATA_FILE = os.path.join(SCRIPT_DIR, "menu_data.json")
 
 VERSION = "2.3.1"
 
+# ========== 功能开关：虚拟股市 ==========
+VS_ENABLED = False  # 设为 True 启用虚拟股市板块
+
 # ========== 虚拟股板块 ==========
-from scripts.virtual_stock import (
-    handle_vs_command as _vs_handle,
-    is_vs_command as _vs_is_command,
-)
+if VS_ENABLED:
+    from scripts.virtual_stock import (
+        handle_vs_command as _vs_handle,
+        is_vs_command as _vs_is_command,
+    )
 
 # DeepSeek / Yau
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
@@ -1394,7 +1398,7 @@ def _is_command(msg):
     if msg == "签到":
         return True
     # 虚拟股指令
-    if _vs_is_command(msg):
+    if VS_ENABLED and _vs_is_command(msg):
         return True
     for key in HELP_CATEGORIES:
         if msg == f"{key}帮助":
@@ -1419,7 +1423,7 @@ async def handle_command(websocket, data: dict, clean_message: str, raw_message:
         return uid in cfg.get("admin_ids", [])
 
     # ===== 虚拟股指令 =====
-    if _vs_is_command(clean_message):
+    if VS_ENABLED and _vs_is_command(clean_message):
         reply = _vs_handle(str(group_id), uid_str, clean_message)
         if reply:
             await send_message_fn(websocket, group_id, reply, at_user=uid_str)

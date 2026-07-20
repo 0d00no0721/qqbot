@@ -459,36 +459,3 @@ def cover_short(
         fee=fee,
         new_balance=account["balance"],
     )
-
-
-# ========== 杠杆利息扣除（由 scheduler 每日调用） ==========
-
-def charge_leverage_interest(group_id: str, user_id: str) -> float:
-    """
-    对杠杆持仓收取每日利息 (0.2%)。
-    返回扣除的利息总额。
-    """
-    config = load_group_config(group_id)
-    rate = config.get("leverage_interest_rate", 0.002)
-
-    account = get_or_create_account(user_id, group_id)
-    total_interest = 0.0
-
-    for code, pos in account.get("positions", {}).items():
-        debt = pos.get("debt", 0.0)
-        if debt > 0:
-            interest = round(debt * rate, 2)
-            total_interest += interest
-            # 从余额扣除利息
-            ok, balance = deduct_balance(group_id, user_id, interest)
-            if not ok:
-                # 余额不足，扣到归零，剩余计入债务
-                actual = balance
-                deduct_balance(group_id, user_id, actual)
-                remaining = interest - actual
-                from .account import update_position_debt
-                update_position_debt(group_id, user_id, code, remaining)
-            # 利息进入生态基金
-            collect_trading_fees(min(interest, total_interest))
-
-    return total_interest

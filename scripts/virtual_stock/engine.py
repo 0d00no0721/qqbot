@@ -274,15 +274,15 @@ def refresh_prices(group_id: str) -> Dict[str, float]:
     new_prices: Dict[str, float] = {}
     now_ts = datetime.now().isoformat()
 
+    # 配置只加载一次（原先在循环内重复加载 9 次）
+    config = load_group_config(group_id)
+    floor = config.get("price_floor", 1.0)
+
     # ── 逐支股票计算新价格 ──
     for code in STOCK_CODES:
         old_price = float(current_prices.get(code, 100.0))
         delta = _compute_delta(code, window)
         new_price = old_price * (1.0 + delta)
-
-        # 价格下界
-        config = load_group_config(group_id)
-        floor = config.get("price_floor", 1.0)
         new_price = max(new_price, floor)
 
         new_prices[code] = round(new_price, 2)

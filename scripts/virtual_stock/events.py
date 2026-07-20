@@ -247,10 +247,14 @@ def process_daily_close(group_id: str) -> DailyReport:
     # 更新 prev_close 为当前价
     prices["prev_close"] = dict(current)
 
-    # 写入历史记录
+    # 写入历史记录（追加到各股票的 history 列表，保持 {code: [{timestamp, price}, ...]} 结构）
     history = prices.get("history", {})
     today = datetime.now().strftime("%Y-%m-%d")
-    history[today] = dict(current)
+    for code in STOCK_CODES:
+        if code not in history:
+            history[code] = []
+        # 收盘快照：timestamp 使用当天日期，price 为收盘价
+        history[code].append({"timestamp": today, "price": current.get(code, 0.0)})
     prices["history"] = history
 
     save_prices(group_id, prices)
