@@ -803,11 +803,19 @@ class DecisionEngine:
 
     # ---------- 独立脚本调用（子进程） ----------
 
-    async def _call_model_script(self, script_path: str, gid: str, max_tokens: int = 500) -> str:
+    async def _call_model_script(
+        self,
+        script_path: str,
+        gid: str,
+        max_tokens: int = 500,
+        api_key: str = "",
+    ) -> str:
         """通过子进程调用独立模型脚本。
 
         构造输入 JSON（context + persona + max_tokens + 动态模型配置），
         启动子进程，通过 stdin 发送输入，读取 stdout 中的 JSON 输出。
+
+        参数 api_key 非空时，覆盖 active_model 的密钥（用于备用模型走独立 key）。
         """
         logger.info("[调试] _call_model_script 被调用: script=%s, gid=%s", os.path.basename(script_path), gid)
         context_text = await self._format_context(gid)
@@ -816,13 +824,16 @@ class DecisionEngine:
         # 动态读取当前模型配置
         active_model = self.get_active_model()
 
+        # 若未显式传入 api_key，则使用主模型配置的 key
+        effective_key = api_key if api_key else active_model["api_key"]
+
         input_data = json.dumps({
             "context": context_text,
             "persona": system_prompt,
             "max_tokens": max_tokens,
             "model": active_model["model"],
             "api_base_url": active_model["api_base_url"],
-            "api_key": active_model["api_key"],
+            "api_key": effective_key,
         }, ensure_ascii=False)
 
         python_exe = sys.executable or "python"
@@ -890,8 +901,12 @@ class DecisionEngine:
             logger.warning("[熔断] 主模型无回复，切换至备用模型")
 
         # Step 2: 备用模型（另一个独立子进程，完全隔离）
+        # 备用模型走独立的 DEEPSEEK_API_KEY，与主模型分开管理
         logger.info("[熔断] 调用备用模型（独立进程）")
-        reply = await self._call_model_script(self._fallback_script, gid, max_tokens)
+        fallback_key = os.getenv("DEEPSEEK_API_KEY", "")
+        reply = await self._call_model_script(
+            self._fallback_script, gid, max_tokens, api_key=fallback_key,
+        )
 
         if reply:
             is_valid, reason = self._validate_content(reply)
