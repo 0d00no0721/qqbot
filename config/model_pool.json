@@ -1,0 +1,24 @@
+{
+  "base_url_env": "LLM_POOL_BASE_URL",
+  "api_key_env": "LLM_POOL_API_KEY",
+  "tiers": [
+    ["deepseek-flash", "deepseek-flash-2"],
+    ["deepseek-v4-flash-ascend", "deepseek-v4-flash-ascend1"],
+    ["qwen3.8-flash-next-2", "qwen3.8-flash-next"],
+    ["glm-5.3-flash"],
+    ["qwen3.8-reasoner", "qwen-reasoner"]
+  ],
+  "attempt_timeout_seconds": 20,
+  "total_budget_seconds": 45,
+  "cooldown_seconds": 60,
+  "hard_cooldown_seconds": 600,
+  "max_tokens_default": 500,
+  "min_max_tokens": 512,
+  "model_overrides": {
+    "glm-5.3-flash": {
+      "min_max_tokens": 128
+    }
+  },
+  "no_response_format": ["qwen3.8-flash-next"],
+  "vision_models": ["deepseek-flash", "glm-5.3-flash", "qwen3.8-chat"]
+}
