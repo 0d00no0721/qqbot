@@ -968,56 +968,34 @@ class DecisionEngine:
             logger.error("模型脚本 %s 调用失败: %s", os.path.basename(script_path), e)
             return ""
 
-    # ---------- 故障转移回复生成（子进程隔离） ----------
+    # ---------- 统一模型池回复生成 ----------
 
     async def _generate_reply_with_failover(self, gid: str,
                                             target: Optional[dict] = None) -> str:
-        """生成回复，主模型失败时自动切换备用模型。
+        """历史方法名保留；聊天只在主进程内执行一轮模型池调用。"""
+        from scripts.reply_prompt import _build_prompt, clean_reply
 
-        两个模型是独立脚本（子进程），各自维护独立的网络状态，
-        主模型的网络问题不会影响备用模型。
-        两个子进程内部都只走本地网关模型池（scripts/llm_pool.py），
-        因此这里不再传递任何云端密钥——"主→备"这层熔断语义保持不变。
-
-        参数 target：本轮要回应的消息（见 _call_model_script），主/备两次调用
-        使用**同一个** target，保证降档后回应对象不漂移。
-        """
-        max_tokens = self.config.get("reply_max_tokens", 500)
-
-        # Step 1: 尝试主模型（独立子进程）
-        reply = await self._call_model_script(
-            self._primary_script, gid, max_tokens, target=target
-        )
-
-        if reply:
-            is_valid, reason = self._validate_content(reply)
-            if is_valid:
-                logger.info("[熔断] 主模型回复有效")
-                self._record_bot_reply_metric(gid, reply)
-                return reply
-            else:
-                logger.warning("[熔断] 主模型内容异常 (%s)，切换至备用模型 | 回复内容: %s", reason, reply[:100])
-        else:
-            logger.warning("[熔断] 主模型无回复，切换至备用模型")
-
-        # Step 2: 备用模型（另一个独立子进程，完全隔离）
-        # 密钥统一走模型池配置（LLM_POOL_API_KEY），不再读取任何云端密钥与云端端点
-        logger.info("[熔断] 调用备用模型（独立进程）")
-        reply = await self._call_model_script(
-            self._fallback_script, gid, max_tokens, target=target
-        )
-
-        if reply:
-            is_valid, reason = self._validate_content(reply)
-            if is_valid:
-                logger.info("[熔断] 备用模型回复有效")
-                self._record_bot_reply_metric(gid, reply)
-                return reply
-            else:
-                logger.warning("[熔断] 备用模型内容异常 (%s)，放弃回复", reason)
-        else:
-            logger.error("[熔断] 备用模型也无回复")
-
+        context = await self._format_context(gid)
+        persona = self._load_character(gid)
+        recent = [reply for reply in self._recent_bot_replies.get(gid, ()) if reply]
+        messages = [
+            {"role": "system", "content": persona},
+            {"role": "user", "content": _build_prompt(context, target, recent)},
+        ]
+        try:
+            content, model = await chat(
+                messages, label="decision", max_tokens=self.config.get("reply_max_tokens", 500),
+                temperature=0.85, preferred=self.get_active_model()["model"], timeout=30.0,
+                reply_validator=lambda text: self._validate_content(clean_reply(text)),
+            )
+            reply = clean_reply(content)
+            self._record_bot_reply_metric(gid, reply)
+            logger.info("[模型池] 聊天回复有效，命中模型=%s", model)
+            return reply
+        except LLMPoolExhausted as exc:
+            logger.warning("[模型池] 聊天生成失败: %s", exc)
+        except Exception as exc:
+            logger.error("[模型池] 聊天生成异常: %s", type(exc).__name__)
         return ""
 
     # ---------- 防复读指标（只记录，不改变行为） ----------

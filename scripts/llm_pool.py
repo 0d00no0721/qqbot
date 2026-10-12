@@ -38,7 +38,7 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import Any, Callable, Iterable, Optional
 
 import httpx
 
@@ -838,6 +838,7 @@ async def chat(
     preferred: Optional[str] = None,
     timeout: Optional[float] = None,
     vision: bool = False,
+    reply_validator: Optional[Callable[[str], tuple[bool, Optional[str]]]] = None,
 ) -> tuple[str, str]:
     """池化调用，返回 (text, model_used)。全部失败抛 LLMPoolExhausted。
 
@@ -854,6 +855,7 @@ async def chat(
     （白名单为空则回退全链）；messages 里的多模态 content 数组是原样透传给
     /chat/completions 的，冷却/审计/预算/故障转移逻辑与非 vision 完全一致。
     不传 vision（默认 False）时行为与本次改动前逐字一致。
+    reply_validator 可选：内容不适合当前业务时仅尝试剩余模型，不设置全局冷却。
     """
     cfg = _load_config()
     if not cfg.get("api_key"):
@@ -892,6 +894,8 @@ async def chat(
     # 本地网关：trust_env=False 防止系统代理把 127.0.0.1 也劫持了
     async with httpx.AsyncClient(trust_env=False) as client:
         for tier, model in order:
+            if _is_cooling(model):
+                continue  # 其他请求可能在本轮等待期间发现了模型故障。
             elapsed = time.monotonic() - started
             remaining = total_budget - elapsed
             if remaining <= 1.0:
@@ -1051,6 +1055,18 @@ async def chat(
                 )
                 continue
 
+            if reply_validator is not None:
+                try:
+                    accepted, reason = reply_validator(text)
+                except Exception as exc:
+                    raise LLMPoolRequestError("回复校验器异常，已停止本轮调用") from exc
+                if not accepted:
+                    err = _sanitize(reason or "业务内容校验未通过")
+                    _record(model, "content", err)
+                    _audit(label=label, tier=tier, model=model, ok=False,
+                           latency_ms=latency_ms, err=err, tokens=tokens)
+                    continue
+
             _audit(
                 label=label,
                 tier=tier,
@@ -1098,6 +1114,7 @@ def chat_sync(
     preferred: Optional[str] = None,
     timeout: Optional[float] = None,
     vision: bool = False,
+    reply_validator: Optional[Callable[[str], tuple[bool, Optional[str]]]] = None,
 ) -> tuple[str, str]:
     """同步包装，供非异步调用点使用。"""
     coro = chat(
@@ -1109,6 +1126,7 @@ def chat_sync(
         preferred=preferred,
         timeout=timeout,
         vision=vision,
+        reply_validator=reply_validator,
     )
     try:
         asyncio.get_running_loop()
