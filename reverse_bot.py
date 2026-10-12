@@ -19,6 +19,8 @@ import sys
 import traceback
 import time
 from collections import defaultdict, deque
+from scripts.message_queue import MessageQueue
+from scripts.request_limits import limits, RequestState, request_state
 from datetime import datetime
 from typing import Dict
 
@@ -168,6 +170,10 @@ repeated_messages: Dict[str, str] = {}
 
 # 运行时状态
 current_websocket = None
+_message_tasks = {}
+_processed_msg_order = deque()
+_receipt_tails = {}
+_receipt_pending = set()
 
 
 # ========== 消息发送 ==========
@@ -218,6 +224,9 @@ async def send_group_file(websocket, group_id: int, file_path: str):
     await websocket.send(json.dumps(payload))
 
 
+message_queue = MessageQueue(send_message)
+
+
 # ========== 识图（V2 接线） ==========
 # 纪律（PM 定稿）：
 #   - 只认 `bot_mentioned`（@bot / 别名命中）；贴图默认不识别（被引用提问除外）；
@@ -246,7 +255,7 @@ def _cq_reply_id(raw_message: str) -> str:
 
 
 async def _describe_triggered_image(gid_str: str, message_images: list, raw_message: str,
-                                    uid_str: str, clean_message: str) -> list:
+                                    uid_str: str, clean_message: str, candidates_snapshot=None) -> list:
     """按「本消息 → 引用 → 最近-同人 → 最近-本群」选图并识图。
 
     返回 `[图片: 描述]` 结果文本列表（0~1 条）。**任何失败都只是返回空列表**，
@@ -261,7 +270,7 @@ async def _describe_triggered_image(gid_str: str, message_images: list, raw_mess
         bot_logger.info(f"[识图] 跳过（限流：本群 1h 内已识 {used} 张，上限 {VISION_MAX_PER_HOUR}）")
         return []
 
-    candidates, source = image_cache.select_candidates(
+    candidates, source = candidates_snapshot if candidates_snapshot is not None else image_cache.select_candidates(
         raw_message, gid_str, uid_str,
         message_images=message_images,
         within=VISION_RECENT_WINDOW,
@@ -306,7 +315,7 @@ async def _describe_triggered_image(gid_str: str, message_images: list, raw_mess
 
 # ========== 消息处理 ==========
 async def handle_message(websocket, data: dict):
-    t_req = time.time()
+    t_req = data.get("_received_at", time.time())
     group_id = data["group_id"]
     user_id = data["user_id"]
     raw_message = data["raw_message"].strip()
@@ -321,9 +330,12 @@ async def handle_message(websocket, data: dict):
             if msg_id in processed_msg_ids:
                 bot_logger.info(f"[去重] 跳过重复消息 mid={msg_id}")
                 return
+            if not processed_msg_ids:
+                _processed_msg_order.clear()
             processed_msg_ids.add(msg_id)
-            if len(processed_msg_ids) > PROCESSED_MSG_MAX:
-                processed_msg_ids.clear()
+            _processed_msg_order.append(msg_id)
+            while len(processed_msg_ids) > PROCESSED_MSG_MAX and _processed_msg_order:
+                processed_msg_ids.discard(_processed_msg_order.popleft())
 
     # 记录已知群
     from scripts.command_handler import known_groups
@@ -333,14 +345,6 @@ async def handle_message(websocket, data: dict):
     gid_str = str(group_id)
     if not any(_feature_on(gid_str, k) for k in _FEATURE_KEYS):
         return
-
-    # ===== 语音消息转文字 =====
-    if "[CQ:record" in raw_message:
-        raw_message = await process_voice_message(raw_message)
-
-    # 清理 CQ 码，检查 @
-    clean_message = re.sub(r'\[CQ:\w+,[^\]]*\]', '', raw_message).strip()
-    bot_mentioned = f"[CQ:at,qq={BOT_QQ}]" in raw_message
 
     # ===== 图片解析 + 本地消息缓存（解引用用） =====
     # 只要有图就无条件入缓存：手机端「先发图 → 再引用提问」时，提问那条消息里没有图,
@@ -356,6 +360,19 @@ async def handle_message(websocket, data: dict):
             images=message_images, raw_message=raw_message,
         )
 
+    # 候选在接收阶段固定，慢语音转写或排队期间的新图片不能改变本条回应目标。
+    candidates = None
+    if _feature_on(gid_str, "vision"):
+        images, source = image_cache.select_candidates(raw_message, gid_str, uid_str,
+            message_images=message_images, within=VISION_RECENT_WINDOW, limit=VISION_PICK_MAX)
+        candidates = ([dict(image) for image in images], source)
+
+    # ===== 语音消息转文字 =====
+    if "[CQ:record" in raw_message:
+        raw_message = await process_voice_message(raw_message)
+    clean_message = re.sub(r'\[CQ:\w+,[^\]]*\]', '', raw_message).strip()
+    bot_mentioned = f"[CQ:at,qq={BOT_QQ}]" in raw_message
+
     # ===== 纯图片/表情消息忽略（无文字且没 @bot → 只缓存不响应） =====
     if not clean_message and not bot_mentioned:
         return
@@ -365,6 +382,50 @@ async def handle_message(websocket, data: dict):
         handled = await handle_command(websocket, data, clean_message, raw_message)
         if handled:
             return
+
+    # 慢转写不会令后到的聊天先写入上下文；命令已在独立通道处理。
+    previous = data.get("_receipt_previous")
+    if previous is not None:
+        await asyncio.shield(previous)
+
+    # ===== 名字/别名检测 =====
+    clean_or_raw = clean_message or raw_message
+    if not bot_mentioned:
+        all_aliases = decision_engine.get_all_character_aliases()
+        if all_aliases:
+            msg_lower = clean_or_raw.lower()
+            for alias_lower, alias_gid in all_aliases.items():
+                if alias_lower in msg_lower:
+                    bot_mentioned = True
+                    bot_logger.info(f"[名字匹配] '{alias_lower}' → 视为 @bot，群{alias_gid}")
+                    break
+
+    # ===== 更新历史缓存 =====
+    group_histories[gid_str].append({
+        "content": clean_message or raw_message,
+        "user_id": uid_str,
+        "timestamp": t_req,
+    })
+
+    # ===== 用户画像：缓冲发言 =====
+    if PROFILE_ENABLED and _feature_on(gid_str, "profile_record"):
+        record_message(gid_str, uid_str, clean_message or raw_message)
+
+    if _feature_on(gid_str, "decision_engine"):
+        context_entry = decision_engine.add_message(gid_str, uid_str, nickname, clean_or_raw,
+                                                    timestamp=t_req)
+        if PROFILE_ENABLED:
+            profile_text = get_profile(gid_str, uid_str)
+            if profile_text:
+                decision_engine.add_message(gid_str, "system", "系统", f"[用户画像: {profile_text}]",
+                                            timestamp=t_req)
+        snapshot = dict(data)
+        snapshot.pop("_receipt_previous", None)
+        snapshot["sender"] = dict(data.get("sender") or {})
+        message_queue.submit(websocket, snapshot,
+            lambda: _run_chat_message(websocket, snapshot, clean_message, raw_message,
+                                     bot_mentioned, list(message_images), context_entry, candidates),
+            explicit=bot_mentioned)
 
     # ===== +1 检测 =====
     gid = str(group_id)
@@ -387,18 +448,17 @@ async def handle_message(websocket, data: dict):
 
             recent_messages[gid] = (user_id, clean_message)
 
-    # ===== 名字/别名检测 =====
-    clean_or_raw = clean_message or raw_message
-    if not bot_mentioned:
-        all_aliases = decision_engine.get_all_character_aliases()
-        if all_aliases:
-            msg_lower = clean_or_raw.lower()
-            for alias_lower, alias_gid in all_aliases.items():
-                if alias_lower in msg_lower:
-                    bot_mentioned = True
-                    bot_logger.info(f"[名字匹配] '{alias_lower}' → 视为 @bot，群{alias_gid}")
-                    break
 
+
+async def _run_chat_message(websocket, data, clean_message, raw_message, bot_mentioned,
+                            message_images, context_entry, candidates_snapshot):
+    group_id = data["group_id"]
+    gid_str, uid_str = str(group_id), str(data["user_id"])
+    nickname = data.get("sender", {}).get("nickname", "")
+    clean_or_raw = clean_message or raw_message
+    t_req = data.get("_received_at", time.time())
+    if not _feature_on(gid_str, "decision_engine"):
+        return
     # ===== 识图（闸门：@bot/别名 + vision 功能位 + 限流 + 贴图过滤 + 同图去重） =====
     # 位置刻意放在"别名检测之后、决策引擎之前"：这样别名命中也算触发（与 @ 同权），
     # 且 `clean_or_raw` 已经算好，注入描述后可与历史缓存里的原文精确比对（不污染 +1/画像）。
@@ -406,7 +466,7 @@ async def handle_message(websocket, data: dict):
     if bot_mentioned and _feature_on(gid_str, "vision"):
         try:
             vision_desc = await _describe_triggered_image(
-                gid_str, message_images, raw_message, uid_str, clean_message,
+                gid_str, message_images, raw_message, uid_str, clean_message, candidates_snapshot,
             )
         except Exception as e:
             # 识图是增强项：任何意外都只记一行日志，文本链照常走
@@ -429,13 +489,8 @@ async def handle_message(websocket, data: dict):
     if _feature_on(gid_str, "decision_engine"):
         t_decision = time.time()
         try:
-            decision_engine.add_message(gid_str, uid_str, nickname, text_for_bot)
-
-            if PROFILE_ENABLED:
-                profile_text = get_profile(gid_str, uid_str)
-                if profile_text:
-                    decision_engine.add_message(gid_str, "system", "系统",
-                        f"[用户画像: {profile_text}]")
+            if context_entry is not None:
+                context_entry["content"] = text_for_bot
 
             should_reply, reply_text = await decision_engine.should_reply(
                 message=text_for_bot,
@@ -461,16 +516,6 @@ async def handle_message(websocket, data: dict):
             bot_logger.info(f"[决策引擎] 出错: {e}")
             traceback.print_exc()
 
-    # ===== 更新历史缓存 =====
-    group_histories[gid_str].append({
-        "content": clean_message or raw_message,
-        "user_id": uid_str,
-        "timestamp": time.time(),
-    })
-
-    # ===== 用户画像：缓冲发言 =====
-    if PROFILE_ENABLED and _feature_on(gid_str, "profile_record"):
-        record_message(gid_str, uid_str, clean_message or raw_message)
 
 
 async def handle_group_increase(websocket, data: dict):
@@ -547,12 +592,60 @@ async def mystery_number_task():
         _mystery_processing = False
 
 
+def _start_message(websocket, data):
+    raw = data.get("raw_message", "")
+    if (not isinstance(raw, str) or not data.get("group_id") or not data.get("user_id")
+            or not isinstance(data.get("sender", {}), dict) or data.get("self_id") == data.get("user_id")):
+        return False
+    if max(len(_message_tasks), len(_receipt_pending)) >= limits.get()["max_message_tasks"]:
+        mentioned = f"[CQ:at,qq={BOT_QQ}]" in raw
+        if not mentioned:
+            mentioned = any(alias in raw.lower() for alias in decision_engine.get_all_character_aliases())
+        if mentioned and _feature_on(str(data.get("group_id", "")), "decision_engine"):
+            message_queue.reject(websocket, data)
+        return False
+    snapshot = dict(data)
+    snapshot["sender"] = dict(data.get("sender") or {})
+    snapshot["_received_at"] = time.time()
+    snapshot["_received_monotonic"] = time.monotonic()
+    key = (websocket, str(data["group_id"]))
+    previous = _receipt_tails.get(key)
+    snapshot["_receipt_previous"] = previous
+    completed = asyncio.get_running_loop().create_future()
+    _receipt_tails[key] = completed
+    _receipt_pending.add(completed)
+    task = asyncio.create_task(_safe_handle_message(websocket, snapshot))
+    _message_tasks[task] = websocket
+
+    def release(_):
+        completed.set_result(None)
+        _receipt_pending.discard(completed)
+        if _receipt_tails.get(key) is completed:
+            _receipt_tails.pop(key, None)
+
+    def finished(done):
+        _message_tasks.pop(done, None)
+        if previous is not None and not previous.done():
+            previous.add_done_callback(release)
+        else:
+            release(None)
+    task.add_done_callback(finished)
+    return True
+
+
 async def _safe_handle_message(websocket, data: dict):
+    state = RequestState(remaining_wait=limits.get(data.get("group_id"))["queue_wait_seconds"])
+    token = request_state.set(state)
     try:
         await handle_message(websocket, data)
     except Exception as e:
         bot_logger.info(f"[task] handle_message 异常: {e}")
         traceback.print_exc()
+    finally:
+        if state.attempts:
+            bot_logger.info("[指令耗时] queue_ms=%d model_ms=%d attempts=%d",
+                            int(state.model_wait * 1000), int(state.model_time * 1000), state.attempts)
+        request_state.reset(token)
 
 
 async def _safe_handle_group_increase(websocket, data: dict):
@@ -589,7 +682,7 @@ async def handler(websocket, *args):
                 post_type = data.get("post_type")
                 if post_type == "message":
                     if data.get("message_type") == "group":
-                        asyncio.create_task(_safe_handle_message(websocket, data))
+                        _start_message(websocket, data)
                 elif post_type == "notice":
                     if data.get("notice_type") == "group_increase":
                         asyncio.create_task(_safe_handle_group_increase(websocket, data))
@@ -611,8 +704,15 @@ async def handler(websocket, *args):
             bot_logger.info(divider_end)
         bot_logger.info("")
     finally:
-        current_websocket = None
-        set_napcat_connected(False)
+        tasks = message_queue.disconnect(websocket)
+        for task, owner in list(_message_tasks.items()):
+            if owner is websocket:
+                task.cancel()
+                tasks.append(task)
+        await asyncio.gather(*tasks, return_exceptions=True)
+        if current_websocket is websocket:
+            current_websocket = None
+            set_napcat_connected(False)
 
 
 async def main():
@@ -647,6 +747,7 @@ async def main():
     finally:
         server.close()
         await server.wait_closed()
+        await message_queue.close()
         for task in background_tasks:
             task.cancel()
         await asyncio.gather(*background_tasks, return_exceptions=True)

@@ -130,12 +130,18 @@ class ContextRingBuffer:
     def add(self, user_id: str, nickname: str, content: str, timestamp: float = 0.0):
         if not content or not content.strip():
             return
-        self._buffer.append({
+        entry = {
             "user_id": str(user_id),
             "nickname": str(nickname),
             "content": str(content).strip(),
             "timestamp": timestamp or time.time(),
-        })
+        }
+        if self._buffer and self._buffer[-1]["timestamp"] > entry["timestamp"]:
+            self._buffer = deque(sorted([*self._buffer, entry], key=lambda item: item["timestamp"]),
+                                 maxlen=self._buffer.maxlen)
+        else:
+            self._buffer.append(entry)
+        return entry
 
     def get_messages(self, max_count: int = 30, max_age_seconds: float = 300) -> list:
         now = time.time()
@@ -1049,10 +1055,10 @@ class DecisionEngine:
     TOPIC_SCAN_WINDOW = 5         # 扫描窗口（每次对比的旧消息条数）
     TOPIC_SIM_THRESHOLD = 0.35    # 相似度阈值：低于此值视为话题切换
 
-    def add_message(self, gid: str, uid: str, nickname: str, content: str):
+    def add_message(self, gid: str, uid: str, nickname: str, content: str, timestamp: float = 0.0):
         """写入一条消息到群上下文缓冲区（供外部调用）。"""
         ctx = self._contexts[gid]
-        ctx.add(uid, nickname, content)
+        return ctx.add(uid, nickname, content, timestamp)
 
     async def _detect_topic_switch(self, gid: str) -> int:
         """检测话题切换边界，返回应保留的最近消息条数。

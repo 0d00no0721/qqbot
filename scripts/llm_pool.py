@@ -42,6 +42,11 @@ from typing import Any, Iterable, Optional
 
 import httpx
 
+try:
+    from scripts.request_limits import limit_model_calls, note_model_attempt
+except ImportError:  # 独立脚本入口
+    from request_limits import limit_model_calls, note_model_attempt
+
 # ---------------------------------------------------------------------------
 # 路径常量
 # ---------------------------------------------------------------------------
@@ -828,6 +833,7 @@ def _extract_text(data: dict) -> tuple[str, Optional[int]]:
     return text, tokens
 
 
+@limit_model_calls
 async def chat(
     messages: list[dict],
     *,
@@ -927,6 +933,7 @@ async def chat(
             http_timeout = min(attempt_timeout, attempt_budget)
 
             call_started = time.monotonic()
+            note_model_attempt()
             try:
                 resp = await client.post(
                     url, json=payload, headers=headers, timeout=http_timeout

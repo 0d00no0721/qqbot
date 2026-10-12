@@ -1,0 +1,17 @@
+{
+  "defaults": {
+    "max_message_tasks": 16,
+    "max_model_calls": 4,
+    "max_pending": 50,
+    "max_pending_per_group": 3,
+    "queue_wait_seconds": 180,
+    "casual_wait_seconds": 15,
+    "wait_notice_seconds": 10,
+    "notice_cooldown_seconds": 30,
+    "notices_enabled": true,
+    "wait_message": "已收到，正在排队，请不用重复发送。",
+    "full_message": "现在排队的人有点多，请稍后再试。",
+    "expired_message": "这条消息等待过久还没开始处理，请重新 @ 我。"
+  },
+  "groups": {}
+}
