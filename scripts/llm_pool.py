@@ -31,7 +31,10 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
+import functools
 import json
+import logging
 import os
 import re
 import threading
@@ -828,6 +831,43 @@ def _extract_text(data: dict) -> tuple[str, Optional[int]]:
     return text, tokens
 
 
+_CALL_STATS = contextvars.ContextVar("llm_call_stats", default=None)
+
+
+def _bounded_chat(fn):
+    """限制整轮墙钟耗时；排队应在此装饰器外完成。"""
+    @functools.wraps(fn)
+    async def bounded(*args, **kwargs):
+        started = time.monotonic()
+        cfg = _load_config()
+        budget = float(cfg["total_budget_seconds"])
+        stats = {"deadline": started + budget, "attempts": 0, "model": None}
+        token = _CALL_STATS.set(stats)
+        outcome = "success"
+        try:
+            return await asyncio.wait_for(fn(*args, **kwargs), budget)
+        except asyncio.CancelledError:
+            outcome = "cancelled"
+            raise
+        except asyncio.TimeoutError as exc:
+            outcome = "total_timeout"
+            if stats["model"]:
+                _mark_cooldown(stats["model"], cfg["cooldown_seconds"])
+            raise LLMPoolExhausted(f"模型池整轮预算 {budget:g}s 已耗尽") from exc
+        except Exception as exc:
+            outcome = type(exc).__name__
+            raise
+        finally:
+            logging.getLogger("qqbot").info(
+                "[模型耗时] label=%s total_ms=%d attempts=%d outcome=%s",
+                kwargs.get("label", "general"), int((time.monotonic() - started) * 1000),
+                stats["attempts"], outcome,
+            )
+            _CALL_STATS.reset(token)
+    return bounded
+
+
+@_bounded_chat
 async def chat(
     messages: list[dict],
     *,
@@ -893,8 +933,9 @@ async def chat(
     async with httpx.AsyncClient(trust_env=False) as client:
         for tier, model in order:
             elapsed = time.monotonic() - started
-            remaining = total_budget - elapsed
-            if remaining <= 1.0:
+            stats = _CALL_STATS.get()
+            remaining = min(total_budget - elapsed, stats["deadline"] - time.monotonic())
+            if remaining <= 0:
                 pending = ", ".join(m for _, m in order if ("preferred" != m))
                 _record(
                     "<budget>",
@@ -927,11 +968,14 @@ async def chat(
             http_timeout = min(attempt_timeout, attempt_budget)
 
             call_started = time.monotonic()
+            stats["attempts"] += 1
+            stats["model"] = model
             try:
-                resp = await client.post(
-                    url, json=payload, headers=headers, timeout=http_timeout
+                resp = await asyncio.wait_for(
+                    client.post(url, json=payload, headers=headers, timeout=http_timeout),
+                    timeout=http_timeout,
                 )
-            except (httpx.TimeoutException, httpx.TransportError, OSError) as exc:
+            except (asyncio.TimeoutError, httpx.TimeoutException, httpx.TransportError, OSError) as exc:
                 latency_ms = int((time.monotonic() - call_started) * 1000)
                 err = _sanitize(f"{type(exc).__name__}: {exc}")
                 _mark_cooldown(model, cooldown)

@@ -929,20 +929,14 @@ class DecisionEngine:
 
         python_exe = sys.executable or "python"
         try:
-            proc = await asyncio.create_subprocess_exec(
-                python_exe, script_path,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+            from scripts.process_guard import run_process
+            returncode, stdout, stderr = await run_process(
+                python_exe, script_path, input=input_data.encode("utf-8"), timeout=60.0,
             )
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(input=input_data.encode("utf-8")),
-                timeout=60.0,
-            )
-            if proc.returncode != 0:
+            if returncode != 0:
                 stderr_text = stderr.decode("utf-8", errors="replace").strip()
                 logger.error("模型脚本 %s 异常退出 (code=%d): %s",
-                             os.path.basename(script_path), proc.returncode, stderr_text[:200])
+                             os.path.basename(script_path), returncode, stderr_text[:200])
                 return ""
 
             output = stdout.decode("utf-8", errors="replace").strip()
