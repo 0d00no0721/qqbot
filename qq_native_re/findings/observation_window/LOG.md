@@ -1,0 +1,125 @@
+# 观察窗日志 — NapCat bypass + fileLog + autoTimeSync 实验
+
+- 实验配置落盘：2026-10-10 13:15（未生效）；备份锚点 `patches/config_backup_20261010-130501/`
+- **首次生效（t0）：2026-10-12 07:28**（登录成功约 07:28:45–47；此前 NapCat 从未带新配置启动过）
+- 判据（RUNBOOK D）：t0 起 48h（推荐满 72h）0 次 `[KickedOffLine]`、0 次要求重扫码、手机无「该号在别处下线」、群功能正常
+- 检查点：**48h = 2026-10-14 07:30；72h = 2026-10-15 07:30**（PM 会话提醒已设）
+- 解读规则：`decisions/006_track_f_gate.md` §三（四类分流）；被踢后 **5 分钟内**摘录原因行（fileLog 5MB×5 轮转，取证窗口很短）
+
+## 一、启动与生效证据（2026-10-12 07:27–07:32，用户终端实录 + PM 读盘/进程快照核实）
+
+| 证据项 | 结果 | 来源 |
+|---|---|---|
+| NapCat 启动 | ✅ 07:28:31，版本目录 9.9.26-44498，boot 主进程 PID 35636 | 用户终端 |
+| `[Napi2NativeLoader] 加载成功` | ✅ | 终端 + fileLog |
+| `[PacketHandler] 初始化成功` | ✅ | 终端 |
+| bypass 六项配置加载 | ✅ hook/window/module/process/container/js 全 true | 终端 + fileLog 配置 dump |
+| kill-switch `NAPCAT_DISABLE_BYPASS` | ✅ 空（未被禁用） | PM 查 HKCU\Environment |
+| 「Bypass已通过环境变量禁用」字样 | ✅ 未出现 | 终端 |
+| `[ServerTime] 时间同步完成` | ✅ 偏差 1242ms（autoTimeSync 生效） | 终端 |
+| fileLog 落盘 | ✅ `logs\2026-10-12_07-28-31.513.log`，07:31:53 已 43,879 字节（debug 级） | PM 读盘 |
+| bot 反向 WS 连接 | ✅ 07:28:48 `客户端已连接 127.0.0.1:60362` | bot 终端 |
+| 群消息收发（入站冒烟） | ✅ 07:28:49 起正常接收群 284517232 消息（`self_id:2668851638`） | 终端 + fileLog |
+| 个人号 784427550（官方 QQNT） | ✅ 未受影响，进程健在（E:\Program Files\Tencent\QQNT\） | PM 进程快照 |
+| Shell QQ 是否登录 784427550 | ✅ 否（快速登录列表仅列出、未使用；仅加载 `napcat_2668851638.json`） | fileLog |
+| NapCat 侧进程 | ✅ 单实例 QQ.exe PID 8548，路径 E:\QQbot\NapCat\NapCat.44498.Shell\QQ.exe | PM 进程快照 |
+| 被踢痕迹 | ✅ 0（KickedOffLine/BotOffline/Kicked/在别处/下线 均无命中） | PM 读盘 |
+
+## 二、证据缺口（诚实记录，不掩盖）
+
+- **`napi2native_bypass.log` 未生成**：四个重点根目录（`E:\QQbot\NapCat\NapCat.44498.Shell`、`...\versions\9.9.26-44498`、`%TEMP%`、`E:\QQ狟婥\Tencent Files\NapCat`）递归搜索（放宽到 `napi|bypass` 名称匹配）均无命中；`NAPCAT_ENABLE_VERBOSE_LOG` 未设置（User 级为空）。
+  - 判断：原生旁路日志很可能受 verbose 开关控制（RUNBOOK B-4 预案）。
+  - **不在观察窗内重启验证**：重启会重置 t0、需重扫码、污染归因；补救窗口 = 下一次重启时先设 `NAPCAT_ENABLE_VERBOSE_LOG=1` 再验证。
+  - 影响：bypass 的「最强证据层」缺失，但「配置加载 + loader 加载成功 + 无 kill-switch」三层证据成立，**实验有效性不受影响**（本实验判据是「踢不踢」，不是日志行）。
+- **fileLog debug 级极密集**：3 分钟 43KB（含完整 RawMessage/OB11Message 消息体），5MB×5 轮转 ⇒ 实际取证窗口只有数小时，不是 7 天。被踢后必须立即摘录。
+- **写盘策略事件**：首次落盘尝试（07:35）被会话级只读文件策略拦截，worker 未落盘、零副作用；用户切回 workspace-write 后本次重派成功。记录备查。
+
+## 三、时间线
+
+| 时间 | 事件 | 证据/备注 |
+|---|---|---|
+| 2026-10-10 13:15 | bypass/fileLog/autoTimeSync 配置落盘（未生效） | patches/config_backup_20261010-130501/ |
+| 2026-10-12 07:27:37 | bot（reverse_bot v2.3.2）启动，监听 0.0.0.0:8080 | bot 终端 |
+| 2026-10-12 07:28:31 | NapCat 启动（9.9.26-44498）；loader/packet/fileLog 就位 | 终端 |
+| **2026-10-12 07:28** | **t0：bot 号 2668851638 登录成功、时间同步完成（偏差 1242ms）** | 终端 + fileLog |
+| 2026-10-12 07:28:48 | bot 侧收到 NapCat 反向 WS 连接 | bot 终端 |
+| 2026-10-12 07:28:49 | 群消息正常接收（功能可用） | 终端 |
+| 2026-10-12 07:32 | PM 完成启动证据核实（读盘+进程+注册表）；48h/72h 提醒已设 | 本文件 |
+| 2026-10-14 07:30 | ⏳ 48h 检查点（待填） | 期望：0 踢 |
+| 2026-10-15 07:30 | ⏳ 72h 复核点（待填） | 期望：0 踢→Gate 4 |
+
+## 四、待办 / 待确认
+
+- [ ] 用户确认：t0 是**手机扫码登录**，还是会话自动恢复？（fileLog 从 07:28:48 才建立，盖不到登录瞬间；不影响实验判据）
+- [ ] 入站已验证；**出站（bot 回复）待用户发一条指令冒烟**
+- [ ] 下一次重启 NapCat 时：先设 `NAPCAT_ENABLE_VERBOSE_LOG=1`，验证 `napi2native_bypass.log` 是否生成及区块标记（记录待办，非观察窗内动作）
+
+## 五、观察期纪律（生效中）
+
+1. 不在任何其它设备/客户端登录 2668851638（手机保持现状即可）
+2. 不在 Shell QQ 登录 784427550
+3. 不动配置、不升级、不加 `NAPCAT_DISABLE_PIPE`（保持归因纯净）
+4. 被踢 → 5 分钟内摘录原因行并发 PM：
+   ```powershell
+   $L='E:\QQbot\NapCat\NapCat.44498.Shell\versions\9.9.26-44498\resources\app\napcat\logs'
+   Select-String -Path "$L\*.log" -Pattern 'KickedOffLine','BotOffline','Kicked','下线' -Context 3,3
+   ```
+5. 禁 `taskkill /f /im QQ.exe`（会误杀个人 QQ）；需要停 NapCat 侧进程时只用 `napcat.kill.qq.bat`
+6. 进程消失但无 `[KickedOffLine]` 行 = 本地崩溃（非被踢），也需发 PM，走 RUNBOOK F 回滚
+
+---
+*创建：2026-10-12 07:40（obs-log-open-2 重派；首次尝试被只读策略拦截）。配套：decisions/006_track_f_gate.md、patches/RUNBOOK.md、findings/track_F/REPORT.md*
+
+---
+
+## 六、判决（2026-10-12 09:35）—— **观察窗失败**
+
+**结果**：t0=07:28 登录，**09:35:14 被服务器踢下线**；自 t0 计存活 **2h07m**，自 08:16（NapCat 进程重启后的会话）计 **1h19m**——两种口径均远小于 RUNBOOK E 的 24h 判据 ⇒ **本路失效**。
+
+**被踢原因行（原文）**：
+```
+10-12 09:35:14 [error] ㅤ | [KickedOffLine] [下线通知] 你的账号当前登录已失效，请重新登录。
+10-12 09:35:15 [info] ㅤ | 账号状态变更为离线
+```
+
+**分诊（decisions/006 §三 四类）**：属 **(c) 类泛化行**「登录已失效，请重新登录」→ 服务器黑盒，**转路线图第 2 步**；不是 (a) 非法外挂工具/安全中心类（无安全中心字样），不是 (b) 其它设备登录类，也不是 (d) 静默离线（NapCat 侧 QQ.exe PID 38628 仍存活）。
+
+**同构案例佐证**：Track F §2.2 记录过**完全同一句原因行**的一手案例 #2062（2026-09-22，Docker，反检测全开仍 ≤1h 被踢）——本例与其同构。
+
+**诚实限制**：
+- bypass 六项配置在位 + `[Napi2NativeLoader] 加载成功` + 无 kill-switch，但 **`napi2native_bypass.log` 在两次会话中均未生成**（`NAPCAT_ENABLE_VERBOSE_LOG` 未开）⇒ 「bypass 钩子确实生效」这一层**无法直接证实**。
+- 历史基线（改造前）：每 1–8 次/天随机掉线，间隔从几分钟到几小时；本次 2h07m **落在既有分布内** ⇒ **未观察到改善**。
+- 单样本不足以断言 bypass 绝对无效，但足以否定「bypass 单独即可稳定」的预期。
+
+**时间线补完**：
+
+| 时间 | 事件 | 证据 |
+|---|---|---|
+| 2026-10-12 07:28:31 | NapCat 启动、bot 号登录（t0） | 日志 `2026-10-12_07-28-31.513.log` |
+| 2026-10-12 08:15:12 | 第一会话日志停止写入 | 同上（196KB） |
+| 2026-10-12 08:15:57 | **NapCat 进程重启**（新日志 + NapCat 侧 QQ.exe PID 38628 启动） | `2026-10-12_08-15-58.000.log`；进程快照 |
+| 2026-10-12 08:16:11 | 反向 WS 重连 bot（**未要求重扫码** ⇒ 缓存凭据快速登录） | bot 日志 |
+| 2026-10-12 09:32:27 | 最后一次正常回复（群 284517232，密度 14 条/分） | bot 日志 |
+| **2026-10-12 09:35:14** | **被踢下线（服务器侧会话作废）** | fileLog [error] KickedOffLine |
+| 2026-10-12 09:35:15 | 账号状态变更为离线 | fileLog [info] |
+
+**下一步**：按 decisions/006 §四 路线图推进（单变量纪律）：R2a 开 `NAPCAT_ENABLE_VERBOSE_LOG=1` 拿 bypass 证据 → R2b 加 `NAPCAT_DISABLE_PIPE=1`（零成本工件伪装）→ R3 升 NapCat 4.18.5→4.18.37（先重做配置备份）→ 后续 env 清洗/amgom 随机化/版本对齐（4.18.5 Win 上限 9.9.31-49738）/packetBackend:server。每次重登需扫码，每次实验记录 t0 与被踢原因行。
+
+**当前状态**：账号离线；NapCat 进程存活；bot 进程存活但无连接；官方 QQNT 未受影响；模型网关迁移与角色（大肥鱼）切换均在 bot 侧，不受本次踢下线影响。
+
+---
+
+## 七、基线样本 #2 与 R2a 准备（2026-10-12 10:38–11:07）
+
+| 时间 | 事件 | 证据 |
+|---|---|---|
+| 09:43:02 | 样本 #2 起点（重新登录，NapCat 新会话） | 日志 `2026-10-12_09-43-02.791.log` |
+| **10:38:26** | **被踢下线（原因行与 #1 逐字相同：泛化行「登录已失效，请重新登录」）** | fileLog [error] KickedOffLine |
+| 10:38:27 | 账号状态变更为离线 | fileLog [info] |
+| 10:43:16 | 会话快速恢复（同一日志继续写入，ServerTime 偏差 1916ms） | fileLog [info] ServerTime |
+| 11:06:56 | NapCat 再次重启（新进程，新日志 `2026-10-12_11-06-56.761.log`） | 进程快照 + 日志文件 |
+| 11:07:12 | bot 反向 WS 重连 | `logs\bot.2026-10-12.log` |
+
+**样本统计**：#1 存活 2h06m43s（07:28:31→09:35:14）；**#2 存活 55m24s（09:43:02→10:38:26）**。两者均落在改造前历史分布（每天 1–8 次、间隔几分钟到几小时）内，**未见改善**；原因行两轮完全一致（泛化行）。
+
+**R2a 状态**：**尚未开始**。检查发现 `NAPCAT_ENABLE_VERBOSE_LOG` 未设（User 级为空）、四个候选位置均无 `napi2native_bypass.log` → 10:43 与 11:06 两次重启都**不是** verbose 会话。已交付一键脚本 `start_napcat_verbose.bat`（设变量+预检+启动）与 `check_bypass_log.ps1`（四位置取证），下次重登双击即可。

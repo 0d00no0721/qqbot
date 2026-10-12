@@ -1,0 +1,30 @@
+E:\QQbot\qq_native_re\findings\model_pool\_w2_smoke.py:4: SyntaxWarning: "\Q" is an invalid escape sequence. Such sequences will not work in the future. Did you mean "\\Q"? A raw string is also an option.
+  用法：cd E:\QQbot; $env:PYTHONIOENCODING="utf-8"; python qq_native_re\findings\model_pool\_w2_smoke.py
+E:\QQbot\scripts\memory_manager.py:10: SyntaxWarning: "\Q" is an invalid escape sequence. Such sequences will not work in the future. Did you mean "\\Q"? A raw string is also an option.
+  cd E:\QQbot && python scripts/memory_manager.py
+[画像] 警告: 文件日志不可用([Errno 13] Permission denied: 'E:\\QQbot\\logs\\bot.2026-10-12.log')，已降级为控制台日志
+[PASS] 1 _state 常量: BASE=http://127.0.0.1:8090 MODEL=deepseek-flash KEY=已配置
+[PASS] 2 _helpers.call_deepseek (Yau): '好的'
+[PASS] 3 character 记忆分类: category=identity text=养了一只叫豆豆的猫
+[PASS] 4 memory_manager 分类: category=preferences text=不喜欢吃香菜
+[PASS] 5 周礼 call_zhouli: len=214 head=我听闻，从前有位臣子在朝中当差，天色已暗，宫门本该落锁，可主事的人又把他叫住，说
+[PASS] 6 算卦 call_divination_api: len=63 head=卦得损之遯，三人行减一人，独行反得良友。体金受土生，吉兆也。今岁换职，宜独断专行
+[PASS] 7 用户画像 _call_profile_api: len=125 alt=deepseek-flash-2
+[PASS] 8 system 模型测试: === 模型池真实调用 (deepseek-flash) === | POST http://127.0.0.1:8090/v1/chat/completions | Status: 200  |  Time: 1.02s | 命中模型: deepseek-flash | Reply: Hi the
+[PASS] 9 首试假模型自动降档: === 降档验证(首试假模型) (no-such-model-xyz) === | POST http://127.0.0.1:8090/v1/chat/completions | Status: 200  |  Time: 1.10s | 命中模型: deepseek-flash | Reply:
+
+--- 池配置摘要 ---
+=== 模型池配置 ===
+出口: http://127.0.0.1:8090/v1
+API Key: 已配置
+T1: deepseek-flash → deepseek-flash-2
+T2: deepseek-v4-flash-ascend → deepseek-v4-flash-ascend1
+T3: qwen3.8-flash-next-2 → qwen3.8-flash-next
+T4: glm-5.3-flash
+T5: qwen3.8-reasoner
+单次尝试 20s | 总预算 45s | 冷却 60s（模型不存在 600s）
+当前 active_model: deepseek-flash
+冷却中: 无
+审计日志: E:\QQbot\qq_native_re\findings\model_pool\llm_pool.jsonl
+
+结果：PASS 9 / FAIL 0

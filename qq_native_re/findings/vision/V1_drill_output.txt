@@ -1,0 +1,103 @@
+V1 识图能力底座 · 实弹演练   2026-10-12 11:19:03
+项目根: E:\QQbot
+网关: http://127.0.0.1:8090/v1 | api_key: 已配置（值一律脱敏 sk-personal-****）
+
+==============================================================================
+1) 真实 NapCat 日志 → parse_cq_images（rkey 已打码）
+==============================================================================
+日志: 2026-10-12_09-43-02.791.log
+含 [CQ:image] 的行数 = 21
+最后一行解析出的图片数 = 3（同一行里 CQ 码重复出现，已各自成项）
+整个日志去重后的图片数 = 19
+最后一条（取第一条）元数据:
+  file=B93E1EAA18C7E2CF73A027F247ED5B14.jpg file_size=8792 sub_type=1 url=https://multimedia.nt.qq.com.cn/download?appid=1407&fileid=EhQ4VVwBRvWwa9LTzzNXA
+  summary='[动画表情]' is_sticker=True
+
+==============================================================================
+2) fetch_image 预检 + 下载 → to_data_url 压缩
+==============================================================================
+[FAIL] 下载失败（0.6s）→ 走步骤 4 的本地生成图兜底
+  直链诊断（另见 _tmp_rkey_probe.py）: HTTP 400 {"retcode":-5503007,"retmsg":"download url has expired"}
+
+预检分支（max_bytes 收窄到 1KB，声明 file_size=271533 → 直接 None，不发请求）:
+  fetch_image(file_size=271533, max_bytes=1024) -> None（0.000s）
+  非 http(s) 直链也不发请求: fetch_image({'url': 'not-a-url'}) -> None
+
+==============================================================================
+3) describe() 实弹识图
+==============================================================================
+[兜底声明] 真实图直链的 rkey 已过期（HTTP 400 / retcode -5503007 'download url has expired'），
+           故用 Pillow 现场生成的**内容已知**图片跑同一条链路验证能力。
+           生成图验证的是『压缩→data URL→多模态透传→描述』这一段；
+           『CQ 解析→预检→下载』这一段由步骤 1/2/2b 的元数据与预检证据覆盖。
+
+--- 本地生成图（兜底）: 纯蓝色 640x480
+    原始 1948 -> 压缩 2088 字节（0.9x） | data URL 前缀 data:image/jpeg;base64,/9j/4AAQSkZJRgABA...
+    describe() -> ok=True 耗时 0.9s
+    描述原文: '这张图片是纯蓝色的，没有可见的图案、文字或物体。'
+    关键词核验: 期望 ['蓝'] -> 命中 ['蓝'] [PASS]
+
+--- 本地生成图（兜底）: 四宫格 左上红/右上绿/左下黄/右下白 800x800
+    原始 3705 -> 压缩 4341 字节（0.9x） | data URL 前缀 data:image/jpeg;base64,/9j/4AAQSkZJRgABA...
+    describe() -> ok=True 耗时 1.5s
+    描述原文: '图片分成四块：左上为红色，右上为绿色，左下为黄色，右下为白色。'
+    关键词核验: 期望 ['红', '绿', '黄'] -> 命中 ['红', '绿', '黄'] [PASS]
+
+--- 本地生成图（兜底）: 高熵噪点图 1200x900（近相片体积）
+    原始 3243482 -> 压缩 473020 字节（6.9x） | data URL 前缀 data:image/jpeg;base64,/9j/4AAQSkZJRgABA...
+    describe() -> ok=True 耗时 2.0s
+    描述原文: '整张图是均匀分布的彩色随机噪点，没有可辨认的物体、轮廓或场景，属于随机噪点而非照片。'
+
+==============================================================================
+5) attempt order 证据（vision=True 限白名单 / 不传 vision 与改动前逐字一致）
+==============================================================================
+config.model_pool.json vision_models = ['deepseek-flash', 'glm-5.3-flash', 'qwen3.8-chat']
+config.model_pool.json tiers          = [['deepseek-flash', 'deepseek-flash-2'], ['deepseek-v4-flash-ascend', 'deepseek-v4-flash-ascend1'], ['qwen3.8-flash-next-2', 'qwen3.8-flash-next'], ['glm-5.3-flash'], ['qwen3.8-reasoner', 'qwen-reasoner']]
+
+默认（不加 vision）attempt order（9 项）:
+    tier=preferred model=deepseek-flash  vision_ok=True
+    tier=1         model=deepseek-flash-2  vision_ok=False
+    tier=2         model=deepseek-v4-flash-ascend  vision_ok=False
+    tier=2         model=deepseek-v4-flash-ascend1  vision_ok=False
+    tier=3         model=qwen3.8-flash-next-2  vision_ok=False
+    tier=3         model=qwen3.8-flash-next  vision_ok=False
+    tier=4         model=glm-5.3-flash  vision_ok=True
+    tier=5         model=qwen3.8-reasoner  vision_ok=False
+    tier=5         model=qwen-reasoner  vision_ok=False
+vision=True  attempt order（2 项）:
+    tier=preferred model=deepseek-flash
+    tier=4         model=glm-5.3-flash
+
+[CHECK] vision=True 序列是否全在白名单内: True
+[CHECK] vision=True 序列 == 按 tiers 顺序过滤白名单: True
+
+对比基准（改动前备份）: qq_native_re\patches\vision_backup_20261012-110536\llm_pool.py
+  备份 chat 签名     : (messages: 'list[dict]', *, label: 'str' = 'general', max_tokens: 'Optional[int]' = None, temperature: 'Optional[float]' = None, response_format: 'Optional[dict]' = None, preferred: 'Optional[str]' = None, timeout: 'Optional[float]' = None) -> 'tuple[str, str]'
+  当前 chat 签名     : (messages: 'list[dict]', *, label: 'str' = 'general', max_tokens: 'Optional[int]' = None, temperature: 'Optional[float]' = None, response_format: 'Optional[dict]' = None, preferred: 'Optional[str]' = None, timeout: 'Optional[float]' = None, vision: 'bool' = False) -> 'tuple[str, str]'
+  比对前冷却状态（已清空以求可比；本演练是独立进程，动的是本进程的冷却表，不影响运行中的 bot）: 当前={}
+  路径对齐前: 备份 CONFIG_PATH=E:\QQbot\qq_native_re\patches\config\model_pool.json
+             备份 ACTIVE_MODEL_PATH=E:\QQbot\qq_native_re\patches\config\active_model.json（不存在 → preferred 为空）
+  路径对齐后: 两者同读 E:\QQbot\config\model_pool.json
+             active_model = 'deepseek-flash'（两边一致）
+  备份 _build_attempt_order() = [('preferred', 'deepseek-flash'), (1, 'deepseek-flash-2'), (2, 'deepseek-v4-flash-ascend'), (2, 'deepseek-v4-flash-ascend1'), (3, 'qwen3.8-flash-next-2'), (3, 'qwen3.8-flash-next'), (4, 'glm-5.3-flash'), (5, 'qwen3.8-reasoner'), (5, 'qwen-reasoner')]
+  当前 _build_attempt_order() = [('preferred', 'deepseek-flash'), (1, 'deepseek-flash-2'), (2, 'deepseek-v4-flash-ascend'), (2, 'deepseek-v4-flash-ascend1'), (3, 'qwen3.8-flash-next-2'), (3, 'qwen3.8-flash-next'), (4, 'glm-5.3-flash'), (5, 'qwen3.8-reasoner'), (5, 'qwen-reasoner')]
+[CHECK] 不传 vision 时 attempt order 与改动前逐字一致（含 tier 标记）: True
+[CHECK] 不传 vision 时模型序列一致: True
+  剔除末尾新增参数后 : (messages: 'list[dict]', *, label: 'str' = 'general', max_tokens: 'Optional[int]' = None, temperature: 'Optional[float]' = None, response_format: 'Optional[dict]' = None, preferred: 'Optional[str]' = None, timeout: 'Optional[float]' = None) -> 'tuple[str, str]'
+[CHECK] 新增参数确实在签名末尾（文本形态符合预期）: True
+[CHECK] 剔除末尾新增参数 vision 后签名与备份逐字一致: True
+[CHECK] 备份模块里没有 vision 参数（新增而非改名）: True
+
+==============================================================================
+5b) 白名单生效性反证（临时白名单 → order 随之收窄）
+==============================================================================
+临时 vision_models=['glm-5.3-flash'] → vision order = ['glm-5.3-flash']
+同一份临时配置下不加 vision → order = ['deepseek-flash', 'deepseek-flash-2', 'deepseek-v4-flash-ascend', 'deepseek-v4-flash-ascend1', 'qwen3.8-flash-next-2', 'qwen3.8-flash-next', 'glm-5.3-flash', 'qwen3.8-reasoner', 'qwen-reasoner']（9 项，未受影响）
+[CHECK] 白名单收窄到 1 个模型时 vision order 只剩它: True
+白名单为空 [] → vision order = ['deepseek-flash', 'deepseek-flash-2', 'deepseek-v4-flash-ascend', 'deepseek-v4-flash-ascend1', 'qwen3.8-flash-next-2', 'qwen3.8-flash-next', 'glm-5.3-flash', 'qwen3.8-reasoner', 'qwen-reasoner']（回退全链: True）
+
+==============================================================================
+汇总
+==============================================================================
+审计日志: E:\QQbot\qq_native_re\findings\model_pool\llm_pool.jsonl
+冷却快照: {}

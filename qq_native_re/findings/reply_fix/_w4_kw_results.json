@@ -1,0 +1,391 @@
+{
+  "config": "config\\decision_rules.json",
+  "backup_source": "qq_native_re\\patches\\keyword_narrow_backup_20261012-123840\\decision_rules.json",
+  "old_keywords": [
+    "error",
+    "exception",
+    "sorry,",
+    "i cannot",
+    "i am unable",
+    "as an ai",
+    "i'm sorry",
+    "i apologize",
+    "unable to",
+    "could not",
+    "internal error",
+    "server error",
+    "request failed",
+    "bad request",
+    "invalid request",
+    "这个话题我不太了解",
+    "我们聊点别的吧",
+    "换个话题吧",
+    "这个话题我不太清楚",
+    "我不太了解这个"
+  ],
+  "new_keywords": [
+    "an error occurred",
+    "error occurred",
+    "traceback (most recent call last)",
+    "exception",
+    "sorry,",
+    "i cannot",
+    "i am unable",
+    "as an ai",
+    "i'm sorry",
+    "i apologize",
+    "unable to",
+    "could not",
+    "internal error",
+    "server error",
+    "request failed",
+    "bad request",
+    "invalid request",
+    "这个话题我不太了解",
+    "我们聊点别的吧",
+    "换个话题吧",
+    "这个话题我不太清楚",
+    "我不太了解这个"
+  ],
+  "cases": [
+    {
+      "label": "误伤案例 terror",
+      "input": "terror",
+      "valid": true,
+      "reason": null,
+      "old_hit": "error",
+      "new_hit": "",
+      "expect_hit": false,
+      "expect_kw": null
+    },
+    {
+      "label": "误伤案例 terror 长句",
+      "input": "泰罗奥特曼的 terror 名场面真帅",
+      "valid": true,
+      "reason": null,
+      "old_hit": "error",
+      "new_hit": "",
+      "expect_hit": false,
+      "expect_kw": null
+    },
+    {
+      "label": "误伤案例 error bar",
+      "input": "error bar",
+      "valid": true,
+      "reason": null,
+      "old_hit": "error",
+      "new_hit": "",
+      "expect_hit": false,
+      "expect_kw": null
+    },
+    {
+      "label": "误伤案例 ErrorBar",
+      "input": "ErrorBar",
+      "valid": true,
+      "reason": null,
+      "old_hit": "error",
+      "new_hit": "",
+      "expect_hit": false,
+      "expect_kw": null
+    },
+    {
+      "label": "误伤案例 中文夹 error",
+      "input": "这个 error 挺奇怪",
+      "valid": true,
+      "reason": null,
+      "old_hit": "error",
+      "new_hit": "",
+      "expect_hit": false,
+      "expect_kw": null
+    },
+    {
+      "label": "误伤案例 群内技术讨论",
+      "input": "这个 ErrorBar 图我画不出来，帮我看下",
+      "valid": true,
+      "reason": null,
+      "old_hit": "error",
+      "new_hit": "",
+      "expect_hit": false,
+      "expect_kw": null
+    },
+    {
+      "label": "正常闲聊",
+      "input": "今天天气不错，要不要一起出去走走？",
+      "valid": true,
+      "reason": null,
+      "old_hit": "",
+      "new_hit": "",
+      "expect_hit": false,
+      "expect_kw": null
+    },
+    {
+      "label": "应命中 internal error",
+      "input": "Internal error: something went wrong",
+      "valid": false,
+      "reason": "命中错误话术关键词 'internal error'",
+      "old_hit": "error",
+      "new_hit": "internal error",
+      "expect_hit": true,
+      "expect_kw": "internal error"
+    },
+    {
+      "label": "应命中 server error",
+      "input": "Server error",
+      "valid": false,
+      "reason": "命中错误话术关键词 'server error'",
+      "old_hit": "error",
+      "new_hit": "server error",
+      "expect_hit": true,
+      "expect_kw": "server error"
+    },
+    {
+      "label": "应命中 an error occurred",
+      "input": "An error occurred while processing",
+      "valid": false,
+      "reason": "命中错误话术关键词 'an error occurred'",
+      "old_hit": "error",
+      "new_hit": "an error occurred",
+      "expect_hit": true,
+      "expect_kw": "an error occurred"
+    },
+    {
+      "label": "应命中 traceback",
+      "input": "Traceback (most recent call last):",
+      "valid": false,
+      "reason": "命中错误话术关键词 'traceback (most recent call last)'",
+      "old_hit": "",
+      "new_hit": "traceback (most recent call last)",
+      "expect_hit": true,
+      "expect_kw": "traceback (most recent call last)"
+    },
+    {
+      "label": "探针 裸 error",
+      "input": "error",
+      "valid": true,
+      "reason": null,
+      "old_hit": "error",
+      "new_hit": "",
+      "expect_hit": null,
+      "expect_kw": null
+    },
+    {
+      "label": "探针 Error: connection reset",
+      "input": "Error: connection reset by peer",
+      "valid": true,
+      "reason": null,
+      "old_hit": "error",
+      "new_hit": "",
+      "expect_hit": null,
+      "expect_kw": null
+    },
+    {
+      "label": "探针 error occurred 小写",
+      "input": "error occurred",
+      "valid": false,
+      "reason": "命中错误话术关键词 'error occurred'",
+      "old_hit": "error",
+      "new_hit": "error occurred",
+      "expect_hit": null,
+      "expect_kw": null
+    },
+    {
+      "label": "探针 大写 INTERNAL ERROR",
+      "input": "INTERNAL ERROR",
+      "valid": false,
+      "reason": "命中错误话术关键词 'internal error'",
+      "old_hit": "error",
+      "new_hit": "internal error",
+      "expect_hit": null,
+      "expect_kw": null
+    },
+    {
+      "label": "探针 Server Error 500",
+      "input": "Server Error 500 - gateway timeout",
+      "valid": false,
+      "reason": "命中错误话术关键词 'server error'",
+      "old_hit": "error",
+      "new_hit": "server error",
+      "expect_hit": null,
+      "expect_kw": null
+    }
+  ],
+  "keyword_probe": [
+    {
+      "kw": "an error occurred",
+      "valid": false,
+      "reason": "命中错误话术关键词 'an error occurred'",
+      "old_hit": "error",
+      "new_hit": "an error occurred",
+      "social": false
+    },
+    {
+      "kw": "error occurred",
+      "valid": false,
+      "reason": "命中错误话术关键词 'error occurred'",
+      "old_hit": "error",
+      "new_hit": "error occurred",
+      "social": false
+    },
+    {
+      "kw": "traceback (most recent call last)",
+      "valid": false,
+      "reason": "命中错误话术关键词 'traceback (most recent call last)'",
+      "old_hit": "",
+      "new_hit": "traceback (most recent call last)",
+      "social": false
+    },
+    {
+      "kw": "exception",
+      "valid": false,
+      "reason": "命中错误话术关键词 'exception'",
+      "old_hit": "exception",
+      "new_hit": "exception",
+      "social": false
+    },
+    {
+      "kw": "sorry,",
+      "valid": false,
+      "reason": "命中错误话术关键词 'sorry,'",
+      "old_hit": "sorry,",
+      "new_hit": "sorry,",
+      "social": false
+    },
+    {
+      "kw": "i cannot",
+      "valid": false,
+      "reason": "命中错误话术关键词 'i cannot'",
+      "old_hit": "i cannot",
+      "new_hit": "i cannot",
+      "social": false
+    },
+    {
+      "kw": "i am unable",
+      "valid": false,
+      "reason": "命中错误话术关键词 'i am unable'",
+      "old_hit": "i am unable",
+      "new_hit": "i am unable",
+      "social": false
+    },
+    {
+      "kw": "as an ai",
+      "valid": false,
+      "reason": "命中错误话术关键词 'as an ai'",
+      "old_hit": "as an ai",
+      "new_hit": "as an ai",
+      "social": false
+    },
+    {
+      "kw": "i'm sorry",
+      "valid": false,
+      "reason": "命中错误话术关键词 'i'm sorry'",
+      "old_hit": "i'm sorry",
+      "new_hit": "i'm sorry",
+      "social": false
+    },
+    {
+      "kw": "i apologize",
+      "valid": false,
+      "reason": "命中错误话术关键词 'i apologize'",
+      "old_hit": "i apologize",
+      "new_hit": "i apologize",
+      "social": false
+    },
+    {
+      "kw": "unable to",
+      "valid": false,
+      "reason": "命中错误话术关键词 'unable to'",
+      "old_hit": "unable to",
+      "new_hit": "unable to",
+      "social": false
+    },
+    {
+      "kw": "could not",
+      "valid": false,
+      "reason": "命中错误话术关键词 'could not'",
+      "old_hit": "could not",
+      "new_hit": "could not",
+      "social": false
+    },
+    {
+      "kw": "internal error",
+      "valid": false,
+      "reason": "命中错误话术关键词 'internal error'",
+      "old_hit": "error",
+      "new_hit": "internal error",
+      "social": false
+    },
+    {
+      "kw": "server error",
+      "valid": false,
+      "reason": "命中错误话术关键词 'server error'",
+      "old_hit": "error",
+      "new_hit": "server error",
+      "social": false
+    },
+    {
+      "kw": "request failed",
+      "valid": false,
+      "reason": "命中错误话术关键词 'request failed'",
+      "old_hit": "request failed",
+      "new_hit": "request failed",
+      "social": false
+    },
+    {
+      "kw": "bad request",
+      "valid": false,
+      "reason": "命中错误话术关键词 'bad request'",
+      "old_hit": "bad request",
+      "new_hit": "bad request",
+      "social": false
+    },
+    {
+      "kw": "invalid request",
+      "valid": false,
+      "reason": "命中错误话术关键词 'invalid request'",
+      "old_hit": "invalid request",
+      "new_hit": "invalid request",
+      "social": false
+    },
+    {
+      "kw": "这个话题我不太了解",
+      "valid": false,
+      "reason": "命中错误话术关键词 '这个话题我不太了解'",
+      "old_hit": "这个话题我不太了解",
+      "new_hit": "这个话题我不太了解",
+      "social": true
+    },
+    {
+      "kw": "我们聊点别的吧",
+      "valid": false,
+      "reason": "命中错误话术关键词 '我们聊点别的吧'",
+      "old_hit": "我们聊点别的吧",
+      "new_hit": "我们聊点别的吧",
+      "social": true
+    },
+    {
+      "kw": "换个话题吧",
+      "valid": false,
+      "reason": "命中错误话术关键词 '换个话题吧'",
+      "old_hit": "换个话题吧",
+      "new_hit": "换个话题吧",
+      "social": true
+    },
+    {
+      "kw": "这个话题我不太清楚",
+      "valid": false,
+      "reason": "命中错误话术关键词 '这个话题我不太清楚'",
+      "old_hit": "这个话题我不太清楚",
+      "new_hit": "这个话题我不太清楚",
+      "social": true
+    },
+    {
+      "kw": "我不太了解这个",
+      "valid": false,
+      "reason": "命中错误话术关键词 '我不太了解这个'",
+      "old_hit": "我不太了解这个",
+      "new_hit": "我不太了解这个",
+      "social": true
+    }
+  ],
+  "fails": []
+}
