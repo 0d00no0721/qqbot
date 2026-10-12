@@ -601,7 +601,8 @@ def _start_message(websocket, data):
         mentioned = f"[CQ:at,qq={BOT_QQ}]" in raw
         if not mentioned:
             mentioned = any(alias in raw.lower() for alias in decision_engine.get_all_character_aliases())
-        if mentioned and _feature_on(str(data.get("group_id", "")), "decision_engine"):
+        if mentioned and any(_feature_on(str(data.get("group_id", "")), key)
+                             for key in ("commands", "decision_engine")):
             message_queue.reject(websocket, data)
         return False
     snapshot = dict(data)

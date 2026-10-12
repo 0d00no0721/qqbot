@@ -274,15 +274,18 @@ class IngressTests(unittest.IsolatedAsyncioTestCase):
             await barrier.wait()
         with patch.object(self.bot, "_safe_handle_message", blocked), \
                 patch.object(self.bot, "limits", Config(max_message_tasks=2)), \
-                patch.object(self.bot, "_feature_on", return_value=False):
+                patch.object(self.bot, "_feature_on", side_effect=lambda gid, key: key == "commands"):
             self.assertFalse(self.bot._start_message(None, {}))
             self.assertTrue(self.bot._start_message(None, message(1)))
             self.assertTrue(self.bot._start_message(None, message(2)))
             self.assertFalse(self.bot._start_message(None, message(3)))
+            self.assertFalse(self.bot._start_message(None, message(4,
+                raw=f"[CQ:at,qq={self.bot.BOT_QQ}] 帮助")))
             self.assertEqual(len(self.bot._message_tasks), 2)
             barrier.set()
             await settle()
             self.assertFalse(self.bot._message_tasks)
+            self.assertEqual(self.queue.send.await_count, 1)  # 只开命令的群也能获知入口已满。
 
     async def test_slow_voice_preserves_receipt_order_without_blocking_text_commands(self):
         from scripts.decision_engine import DecisionEngine
