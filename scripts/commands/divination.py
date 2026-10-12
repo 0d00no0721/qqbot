@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""算卦/占卜 — 梅花易数起卦 + DeepSeek AI 解读。"""
+"""算卦/占卜 — 梅花易数起卦 + AI 解读（走中央模型池）。"""
 
 import asyncio
 import json
@@ -7,7 +7,10 @@ import os
 import re
 import time
 
-import httpx
+try:
+    from scripts.llm_pool import chat, chat_sync, available_models, LLMPoolExhausted
+except ImportError:  # 以脚本方式直接运行时
+    from llm_pool import chat, chat_sync, available_models, LLMPoolExhausted
 
 from . import _state
 from ._registry import register, CommandContext
@@ -241,7 +244,7 @@ def perform_divination(nickname: str, qq_id: str, event_text: str, dt=None) -> d
 
 
 async def call_divination_api(divination_json: dict, event_text: str) -> str:
-    """调用 DeepSeek API 解读卦象（完全异步）"""
+    """调用中央模型池解读卦象（完全异步，池内自动故障转移）"""
     event_desc = event_text.strip() if event_text.strip() else "一般性询问"
     system_prompt = "你是一位精通易经的古代卦师，根据卦象为问卜者指点迷津。回答需简洁玄妙，60字左右，通俗易懂。"
 
@@ -262,33 +265,21 @@ async def call_divination_api(divination_json: dict, event_text: str) -> str:
         f"\n整体吉凶：{divination_json['ji_xiong']}"
     )
 
-    timeout = httpx.Timeout(15)
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        payload = {
-            "model": _state.DIVINATION_MODEL,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_message},
-            ],
-            "max_tokens": _state.DIVINATION_MAX_TOKENS,
-            "temperature": 0.7,
-        }
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {_state.DIVINATION_API_KEY}",
-        }
-        resp = await client.post(
-            f"{_state.DEEPSEEK_BASE_URL}/chat/completions",
-            json=payload, headers=headers,
-        )
-        resp.raise_for_status()
-        result = resp.json()
-        content = result["choices"][0]["message"]["content"]
-        if not content:
-            if _state.bot_logger:
-                _state.bot_logger.info("[占卜] 警告: AI 返回了空内容")
-            return "卦象已出，但解读为空，请换个描述重试。"
-        return content
+    content, _model = await chat(
+        [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message},
+        ],
+        label="divination",
+        max_tokens=_state.DIVINATION_MAX_TOKENS,
+        temperature=0.7,
+        timeout=15.0,
+    )
+    if not content:
+        if _state.bot_logger:
+            _state.bot_logger.info("[占卜] 警告: AI 返回了空内容")
+        return "卦象已出，但解读为空，请换个描述重试。"
+    return content
 
 
 def _divination_match(msg: str):

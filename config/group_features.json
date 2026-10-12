@@ -1,12 +1,13 @@
 {
   "284517232": {
-    "group_name": "",
+    "group_name": "碧油鸡乐土（转正版）",
     "features": {
-      "decision_engine": false,
-      "plus_one": false,
-      "commands": false,
-      "newcomer_welcome": false,
-      "profile_record": false
+      "decision_engine": true,
+      "plus_one": true,
+      "commands": true,
+      "newcomer_welcome": true,
+      "profile_record": true,
+      "vision": true
     }
   },
   "1055881417": {
@@ -17,16 +18,6 @@
       "commands": false,
       "newcomer_welcome": false,
       "profile_record": false
-    }
-  },
-  "755471390": {
-    "group_name": "",
-    "features": {
-      "decision_engine": true,
-      "plus_one": true,
-      "commands": true,
-      "newcomer_welcome": true,
-      "profile_record": true
     }
   }
 }

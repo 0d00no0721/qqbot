@@ -1,45 +1,104 @@
-# 敏感文件
-.env
-user_profiles.json
+# ============================================================
+# QQbot .gitignore
+# 原则：代码与配置模板进仓库；运行时真实数据、密钥、大体积
+#       依赖、工程原始产物一律不进。
+# ============================================================
 
-# 大文件 / 二进制
+# ---------- 密钥（绝不公开）----------
+.env
+*.key
+*credential*.json
+
+# ---------- 运行时真实数据（含真实 QQ 号/群号/画像，绝不公开）----------
+user_profiles.json
+menu_data.json
+scripts/sign_in_data.json
+config/characters/*/memories/group/
+config/characters/*.backup/
+config/characters/*.backup
+scripts/virtual_stock/data/
+
+# ---------- 日志 ----------
+logs/
+*.log
+
+# ---------- 依赖目录（体积巨大）----------
 NapCat/
 venv/
 models_cache/
+LiteLoaderQQNT/
+build/
 
-# Python 缓存
+# ---------- 外部参考仓库 ----------
+zhouli-translator-ref/
+pixivtools-src/
+
+# ---------- 归档（移入即从 git 视角删除，保持忽略）----------
+archive/
+backup_pre_phase1/
+
+# ---------- Python ----------
 __pycache__/
 *.py[cod]
 *.pyo
-scripts/__pycache__/
+*.egg-info/
+.pytest_cache/
 
-# 运行时数据
-logs/
-sign_in_data.json
+# ---------- 工程档案：只留报告，不留原始产物 ----------
+qq_native_re/patches/
+qq_native_re/**/_drill_tmp/
+qq_native_re/**/__pycache__/
+qq_native_re/**/_*.py
+qq_native_re/**/_*/
+qq_native_re/**/*.jsonl
+qq_native_re/**/*.tmp
+qq_native_re/**/probe_results*.json
+qq_native_re/**/replay_results*.json
+qq_native_re/**/context_data.json
 
-# 归档文件（体积大，不追踪）
-archive/
+# ---------- 逆向工程材料：不进公开仓库（第三方二进制 + 注入分析 + 绕过实验）----------
+qq_native_re/samples/
+qq_native_re/prompts/
+qq_native_re/WORKFLOW.md
+qq_native_re/PROJECT_CONTEXT.md
+qq_native_re/patches/
+qq_native_re/decisions/001_initial_strategy.md
+qq_native_re/decisions/002_wave1_synthesis.md
+qq_native_re/decisions/003_firsthand_evidence_revision.md
+qq_native_re/decisions/004_handoff_state.md
+qq_native_re/findings/track_A/
+qq_native_re/findings/track_B/
+qq_native_re/findings/track_C/
+qq_native_re/findings/track_D/
+qq_native_re/findings/track_E/
+qq_native_re/findings/track_F/
+qq_native_re/findings/track_G/
+qq_native_re/findings/rounds/
+qq_native_re/findings/upgrade/
+qq_native_re/findings/artifact_surface/
 
-# Claude Code 会话
-.claude/
+# ---------- 研究/调试中间产物 ----------
+.gh_*
+.acl-recovery/
+drill_out.txt
+check_bypass_log.bat
+check_bypass_log.ps1
+start_napcat_verbose.bat
+scripts/_*.tmp
 
-# IDE
+# ---------- 本地备份 ----------
+*.backup
+*.backup_refactor
+*.orig
+*.rej
+
+# ---------- IDE / 编辑器 ----------
 .vscode/
 .idea/
+.claude/
+*.swp
 
-# Windows
+# ---------- Windows ----------
 Thumbs.db
-
-# Local backups
-backup_pre_phase1/
-*.backup/
-*.backup
-
-# Windows artifacts
+Desktop.ini
 nul
-
-# Virtual stock runtime data
-scripts/virtual_stock/data/
-
-# External reference repos
-zhouli-translator-ref/

@@ -23,7 +23,8 @@
       "max_length": 500,
       "gibberish_max_ratio": 0.6,
       "error_keywords": [
-        "error", "exception", "sorry,", "i cannot", "i am unable",
+        "an error occurred", "error occurred", "traceback (most recent call last)",
+        "exception", "sorry,", "i cannot", "i am unable",
         "as an ai", "i'm sorry", "i apologize", "unable to",
         "could not", "internal error", "server error",
         "request failed", "bad request", "invalid request",
@@ -37,7 +38,7 @@
     "fallback": {
       "_comment": "备用模型（与主模型相同，同一密钥）",
       "api_key_env": "DEEPSEEK_API_KEY",
-      "api_base_url": "https://api.deepseek.com/v1",
+      "api_base_url": "http://127.0.0.1:8090/v1",
       "model": "deepseek-v4-flash",
       "api_format": "openai"
     }
