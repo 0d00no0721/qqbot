@@ -24,3 +24,4 @@ from . import character  # noqa: F401
 from . import system  # noqa: F401
 from . import voice  # noqa: F401
 from . import help  # noqa: F401
+from . import interaction  # noqa: F401

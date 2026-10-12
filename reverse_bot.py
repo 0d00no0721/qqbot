@@ -23,6 +23,7 @@ from datetime import datetime
 from typing import Dict
 
 import websockets
+from scripts.interaction_menu import InteractionMenus
 
 # ========== 并发安全锁 ==========
 _plus_one_locks: dict = {}
@@ -168,6 +169,7 @@ repeated_messages: Dict[str, str] = {}
 
 # 运行时状态
 current_websocket = None
+interaction_menus = InteractionMenus(_get_group_features, handle_command, bot_logger)
 
 
 # ========== 消息发送 ==========
@@ -586,6 +588,10 @@ async def handler(websocket, *args):
         async for message in websocket:
             try:
                 data = json.loads(message)
+                if not isinstance(data, dict):
+                    continue
+                if interaction_menus.rpc.resolve(websocket, data):
+                    continue
                 post_type = data.get("post_type")
                 if post_type == "message":
                     if data.get("message_type") == "group":
@@ -593,6 +599,8 @@ async def handler(websocket, *args):
                 elif post_type == "notice":
                     if data.get("notice_type") == "group_increase":
                         asyncio.create_task(_safe_handle_group_increase(websocket, data))
+                    else:
+                        interaction_menus.handle_notice(websocket, data)
             except json.JSONDecodeError:
                 bot_logger.info(f"无效 JSON: {message[:100]}")
             except Exception as e:
@@ -611,13 +619,16 @@ async def handler(websocket, *args):
             bot_logger.info(divider_end)
         bot_logger.info("")
     finally:
-        current_websocket = None
-        set_napcat_connected(False)
+        interaction_menus.disconnect(websocket)
+        if current_websocket is websocket:
+            current_websocket = None
+            set_napcat_connected(False)
 
 
 async def main():
     # 初始化命令处理器外部引用
-    init_handlers(bot_logger, decision_engine, send_message, send_group_image, send_group_file)
+    init_handlers(bot_logger, decision_engine, send_message, send_group_image, send_group_file,
+                  menus=interaction_menus)
 
     if PROFILE_ENABLED:
         load_profiles()

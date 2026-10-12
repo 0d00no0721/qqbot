@@ -1,0 +1,17 @@
+{
+  "defaults": {
+    "items": [
+      {"emoji_id": "128077", "emoji": "👍", "label": "签到", "command": "签到"},
+      {"emoji_id": "127836", "emoji": "🍜", "label": "今天吃啥", "command": "今天吃啥"},
+      {"emoji_id": "10068", "emoji": "❔", "label": "帮助", "command": "帮助"}
+    ],
+    "menu_ttl_seconds": 600,
+    "menu_cooldown_seconds": 30,
+    "action_cooldown_seconds": 3
+  },
+  "groups": {},
+  "max_menus_per_group": 5,
+  "max_menus_total": 500,
+  "max_concurrent_actions": 8,
+  "api_timeout_seconds": 10
+}

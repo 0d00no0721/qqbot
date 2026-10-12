@@ -78,6 +78,7 @@ async def cmd_help(ctx: CommandContext, _matched=None) -> bool:
     lines = [f"机器人 v{_state.VERSION} 可用命令（发送 @bot [类别]帮助 查看详情）："]
     for key, short in HELP_SHORT.items():
         lines.append(f"  {key} — {short}")
+    lines.append("  互动菜单 — @bot 互动菜单，或戳机器人后点击表情（需管理员按群启用）")
     reply = "\n".join(lines)
     await ctx.send(reply, at_user=ctx.uid_str)
     return True

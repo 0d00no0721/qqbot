@@ -30,10 +30,13 @@ FEATURES = (
     ("commands", "指令响应", "@bot 帮助、Yau、周礼等所有指令"),
     ("newcomer_welcome", "新人欢迎", "新成员入群时自动欢迎"),
     ("profile_record", "用户画像", "记录该群用户发言用于画像更新"),
+    ("poke_menu", "戳一戳菜单", "戳机器人打开菜单（同时需要启用指令响应）"),
+    ("reaction_menu", "表情交互", "点击互动菜单的表情执行指令（同时需要启用指令响应）"),
 )
 FEATURE_KEYS = tuple(f[0] for f in FEATURES)
 FEATURE_LABELS = {f[0]: f[1] for f in FEATURES}
 FEATURE_DESCS = {f[0]: f[2] for f in FEATURES}
+FEATURE_DEFAULTS = {key: key not in ("poke_menu", "reaction_menu") for key in FEATURE_KEYS}
 
 
 # ---------- 工具函数 ----------
@@ -90,9 +93,9 @@ def get_default_features() -> dict:
     if isinstance(feat, dict):
         merged = {}
         for key in FEATURE_KEYS:
-            merged[key] = feat.get(key, True)
+            merged[key] = feat.get(key, FEATURE_DEFAULTS[key])
         return merged
-    return {key: True for key in FEATURE_KEYS}
+    return dict(FEATURE_DEFAULTS)
 
 
 def _normalize_entry(entry):
@@ -101,10 +104,13 @@ def _normalize_entry(entry):
         return {}
     feat = entry.get("features", {})
     defaults = get_default_features()
-    merged = {}
+    merged = dict(feat) if isinstance(feat, dict) else {}
     for key in FEATURE_KEYS:
-        merged[key] = feat.get(key, defaults[key]) if isinstance(feat, dict) else defaults[key]
+        # 新群模板不应在编辑旧群时悄悄打开互动功能。
+        fallback = False if key in ("poke_menu", "reaction_menu") else defaults[key]
+        merged[key] = feat.get(key, fallback) if isinstance(feat, dict) else fallback
     return {
+        **entry,
         "group_name": entry.get("group_name", ""),
         "features": merged,
     }
@@ -179,7 +185,7 @@ def print_group_list():
 
     print()
     header = f"  {'群号':<15} {'群名':<15} {'角色':<20}"
-    header += "  决策  +1   指令  新人  画像"
+    header += "  决策  +1   指令  新人  画像  戳戳  表情"
     print(header)
 
     for gid in sorted(data.keys()):
@@ -193,7 +199,7 @@ def print_group_list():
             feat = {}
         icons = ""
         for key in FEATURE_KEYS:
-            icons += f"  {_icon(feat.get(key, True))}  "
+            icons += f"  {_icon(feat.get(key, FEATURE_DEFAULTS[key]))}  "
         print(f"  {gid:<15} {name:<15} {char:<20} {icons}")
 
     print(f"\n  共 {len(data)} 个群")
@@ -212,7 +218,7 @@ def print_group_detail(gid, entry):
     print()
 
     for key, label, desc in FEATURES:
-        on = feat.get(key, True)
+        on = feat.get(key, FEATURE_DEFAULTS[key])
         print(f"    [{_icon(on)}] {label}: {desc}")
 
     print()
@@ -271,7 +277,7 @@ def cmd_edit():
     while True:
         print("  编辑选项:")
         for i, (key, label, desc) in enumerate(FEATURES):
-            on = entry["features"].get(key, True)
+            on = entry["features"].get(key, FEATURE_DEFAULTS[key])
             print(f"    {i + 1}. {label} (当前: {_icon(on)})")
         n_features = len(FEATURES)
         print(f"    {n_features + 1}. 设置群名")
@@ -289,7 +295,7 @@ def cmd_edit():
             if 1 <= idx <= n_features:
                 key = FEATURE_KEYS[idx - 1]
                 label = FEATURE_LABELS[key]
-                current = entry["features"].get(key, True)
+                current = entry["features"].get(key, FEATURE_DEFAULTS[key])
                 entry["features"][key] = not current
                 state = "启用" if entry["features"][key] else "禁用"
                 data[gid] = entry
@@ -335,17 +341,19 @@ def cmd_add_group():
         data[gid]["group_name"] = name
         save_features(data)
 
-    print(f"已添加群 {gid}，默认功能全部启用。")
+    print(f"已添加群 {gid}，功能按新群默认配置设置。")
 
 
 def cmd_set_defaults():
     """设置新群默认模板。"""
     defaults = load_defaults()
     feat = defaults.get("features", {})
+    if not isinstance(feat, dict):
+        feat = {}
 
     print("\n  新群加入时的默认功能配置：")
     for i, (key, label, desc) in enumerate(FEATURES):
-        on = feat.get(key, True)
+        on = feat.get(key, FEATURE_DEFAULTS[key])
         print(f"    [{_icon(on)}] {i + 1}. {label}: {desc}")
 
     n_features = len(FEATURES)
@@ -363,7 +371,7 @@ def cmd_set_defaults():
         if 1 <= idx <= n_features:
             key = FEATURE_KEYS[idx - 1]
             label = FEATURE_LABELS[key]
-            current = feat.get(key, True)
+            current = feat.get(key, FEATURE_DEFAULTS[key])
             if not isinstance(feat, dict):
                 feat = {}
             feat[key] = not current

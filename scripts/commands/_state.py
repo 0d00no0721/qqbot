@@ -161,13 +161,16 @@ decision_engine = None
 send_message_fn = None
 send_group_image_fn = None
 send_group_file_fn = None
+interaction_menus = None
 
 
-def init_handlers(logger, de, send_msg_fn, send_img_fn, send_file_fn):
+def init_handlers(logger, de, send_msg_fn, send_img_fn, send_file_fn, menus=None):
     """初始化外部引用（reverse_bot.py 在 main() 中调用一次）"""
     global bot_logger, decision_engine, send_message_fn, send_group_image_fn, send_group_file_fn
+    global interaction_menus
     bot_logger = logger
     decision_engine = de
     send_message_fn = send_msg_fn
     send_group_image_fn = send_img_fn
     send_group_file_fn = send_file_fn
+    interaction_menus = menus

@@ -132,7 +132,14 @@ $env:PYTHONIOENCODING="utf-8"; .\venv\Scripts\python -c "import reverse_bot; pri
 .\venv\Scripts\python scripts\llm_pool.py
 ```
 
-`scripts/test_*.py` 是探索性/演练脚本，不是测试套件。
+其他 `scripts/test_*.py` 多为探索性/演练脚本。互动菜单另有标准库离线回归测试：
+
+```powershell
+$env:PYTHONIOENCODING="utf-8"
+.\venv\Scripts\python -m unittest scripts.test_interaction_menu -v
+```
+
+该测试使用模拟 WebSocket、可控时钟和临时签到数据，不连接 QQ 或模型接口。
 
 ### 管理工具
 
@@ -140,6 +147,58 @@ $env:PYTHONIOENCODING="utf-8"; .\venv\Scripts\python -c "import reverse_bot; pri
 .\venv\Scripts\python scripts\group_manager.py     # 群功能开关（交互式 CLI）
 .\venv\Scripts\python scripts\memory_manager.py    # 角色记忆/人设管理
 ```
+
+---
+
+## 👆 戳一戳与表情互动菜单
+
+默认关闭。在群功能管理中为目标群开启 **指令响应**、**戳一戳菜单**、**表情交互**。
+群配置的对应字段是 `commands`、`poke_menu`、`reaction_menu`；未配置的群不响应，缺少两个新字段时按关闭处理。
+
+群友戳机器人，或发送 `@bot 互动菜单`，即可打开全群共享菜单。默认提供 👍 签到、🍜 今天吃啥、❔ 帮助。
+点击菜单消息下的表情回应，操作按实际点击者身份执行；取消回应不执行，取消后重新添加可再次执行。
+仅开启戳一戳时发送文字菜单；仅开启表情交互时用 `@bot 互动菜单` 打开。
+这依赖 NapCat 的 `notify.poke`、`group_msg_emoji_like` 事件和 `set_msg_emoji_like` 接口，不是官方 Bot 的原生按钮。
+
+菜单内容在 `config/interaction_menu.json` 中配置。每项包含 `emoji_id`、`emoji`、`label`、`command`，
+`command` 是交给现有命令处理器的完整文字（无需写 `@bot`），可携带固定参数；最多 6 项，表情 ID 不得重复。
+权限检查、签到锁和各命令自己的限流仍然生效。需要图片或用户临时输入的命令，请使用原来的文字入口。
+
+`defaults` 是公共配置，`groups` 可按群覆盖：覆盖 `items` 时整份菜单替换，未填写的时间设置继承 `defaults`。
+例如，把文件中的 `groups` 改为以下内容（`10001` 是示例群号，请替换）：
+
+```json
+{
+  "10001": {
+    "items": [
+      {"emoji_id": "128077", "emoji": "👍", "label": "签到", "command": "签到"},
+      {"emoji_id": "127836", "emoji": "🍜", "label": "我吃什么", "command": "今天吃啥 自己"}
+    ],
+    "menu_ttl_seconds": 300
+  }
+}
+```
+
+| 配置字段 | 位置 | 默认值 | 含义 |
+|---|---|---|---|
+| `menu_ttl_seconds` | `defaults` / 群覆盖 | 600 秒 | 菜单有效期 |
+| `menu_cooldown_seconds` | `defaults` / 群覆盖 | 30 秒 | 同群再次打开菜单的间隔 |
+| `action_cooldown_seconds` | `defaults` / 群覆盖 | 3 秒 | 同群同用户两次操作的间隔；短窗口去重下限 3 秒 |
+| `max_menus_per_group` | 根节点 | 5 | 每群缓存的菜单数，超出淘汰最旧菜单 |
+| `max_menus_total` | 根节点 | 500 | 全局菜单缓存上限 |
+| `max_concurrent_actions` | 根节点 | 8 | 同时处理的交互任务数（含菜单发送），忙时不排队 |
+| `api_timeout_seconds` | 根节点 | 10 秒 | 单次菜单发送/回应设置等待回执的上限 |
+
+菜单配置在相关事件到来时按文件修改时间更新；无效配置暂停互动并记录一次错误，普通命令仍可用。
+已有菜单保留创建时的命令映射，但点击时仍检查当前群开关。过期、被缓存淘汰、断线或重启后的菜单需要重新打开。
+冷却期间及达到并发上限时忽略新交互，避免用“请稍候”消息刷屏。
+
+**运行开销**：不新增轮询或定时清理任务，不查询历史消息/回应列表/群成员，不为菜单调用模型。
+打开默认菜单需要 1 次发消息和 3 次设置回应；点击后直接执行原命令。缓存按事件清理，去重和冷却记录各最多 4096 条。
+回执超时不重发菜单；设置表情失败时保留文字命令入口，也可手动为菜单添加对应回应。
+群友需在原版 QQ 中使用支持的表情，手机/电脑客户端的入口和 NapCat 版本兼容性需要实际联调。
+
+联调待验收：手机和电脑分别验证戳一戳、预置回应显示、不同群友点击、取消后再添加、关闭群开关、重连后重新打开菜单。
 
 ---
 
@@ -151,6 +210,7 @@ $env:PYTHONIOENCODING="utf-8"; .\venv\Scripts\python -c "import reverse_bot; pri
 | `scripts/decision_engine.py` | 决策引擎：上下文缓冲、密度阈值、话题切换检测、主备熔断 |
 | `scripts/llm_pool.py` | **中央模型池**：优先级链、冷却、预算、审计 JSONL |
 | `scripts/commands/` | 指令包（注册表模式，14 个模块） |
+| `scripts/interaction_menu.py` | 戳一戳/表情交互、菜单缓存与 OneBot 回执关联 |
 | `scripts/model_primary.py` / `model_fallback.py` | 模型子进程（stdin/stdout JSON 通信） |
 | `scripts/zero_shot_classifier.py` | 零样本分类器（懒加载，避免启动时载入 torch） |
 | `scripts/user_profile.py` | 用户画像（缓冲 + 定时批量更新） |
@@ -182,11 +242,12 @@ $env:PYTHONIOENCODING="utf-8"; .\venv\Scripts\python -c "import reverse_bot; pri
 | `active_model.json` | 当前主模型（必须在链内） | ✅ |
 | `active_character.json` | 角色开关 + `admin_ids` | ✅ |
 | `group_characters.json` | 群 → 角色映射 | ✅ |
-| `group_features.json` | 群 → 五项功能开关 | ✅ mtime |
+| `group_features.json` | 群 → 功能开关 | ✅ mtime |
+| `interaction_menu.json` | 公共/群专属互动菜单、冷却及容量上限 | ✅ mtime |
 | `decision_rules.json` | 决策阈值 + 内容校验规则 | 重启 |
 | `characters/{角色}/` | `persona.txt`（五段式）+ `info.json` + `memories/` | ✅ |
 
-⚠️ **`group_features.json` 是白名单语义**：未配置的群 **五项功能全关**（不是全开）。新群必须先用 `group_manager.py` 加入，否则机器人完全静默且不打日志。
+⚠️ **`group_features.json` 是白名单语义**：未配置的群 **所有功能全关**（不是全开）。新群必须先用 `group_manager.py` 加入，否则机器人完全静默且不打日志。
 
 ---
 
@@ -223,7 +284,7 @@ $env:PYTHONIOENCODING="utf-8"; .\venv\Scripts\python -c "import reverse_bot; pri
 - **必须由普通控制台启动**：受限环境（沙箱）下 `asyncio.create_subprocess_exec` 会 `WinError 5`，且无法写 `logs/`，表现为"在线但永不回复"
 - **模型网关需自行部署**：`127.0.0.1:8090` 不是本项目提供的组件
 - `logs/` 若 ACL 异常，日志会降级为仅控制台输出（这是刻意设计：日志打不开绝不阻断启动）
-- 无自动化测试套件；验证靠导入自检 + 定向 dispatch 测试
+- 互动菜单有离线自动化测试；其余功能仍主要靠导入自检 + 定向 dispatch 测试
 
 ---
 
