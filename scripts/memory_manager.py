@@ -11,7 +11,6 @@
 """
 
 import asyncio
-import httpx
 import json
 import os
 import re
@@ -23,6 +22,11 @@ try:
 except ImportError:
     pass
 
+try:
+    from scripts.llm_pool import chat, chat_sync, available_models, LLMPoolExhausted
+except ImportError:  # 以脚本方式直接运行时
+    from llm_pool import chat, chat_sync, available_models, LLMPoolExhausted
+
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_DIR = os.path.dirname(SCRIPT_DIR)
 CONFIG_DIR = os.path.join(PROJECT_DIR, "config")
@@ -30,10 +34,8 @@ CHARACTERS_DIR = os.path.join(CONFIG_DIR, "characters")
 ACTIVE_FILE = os.path.join(CONFIG_DIR, "active_character.json")
 PROFILES_FILE = os.path.join(PROJECT_DIR, "user_profiles.json")
 
-# 从 .env 读取 API Key
-DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
-DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1"
-DEEPSEEK_MODEL = "deepseek-chat"
+# 模型出口：中央模型池（本地网关 http://127.0.0.1:8090/v1），
+# key 由 llm_pool 自行读取 .env 的 LLM_POOL_API_KEY，本脚本不再持有端点。
 
 CATEGORY_LABELS = {
     "identity": "身份",
@@ -112,37 +114,27 @@ async def classify_text(text: str) -> tuple:
         "只输出 JSON，不要其他内容。"
     )
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            payload = {
-                "model": DEEPSEEK_MODEL,
-                "max_tokens": 100,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": text},
-                ],
-            }
-            resp = await client.post(
-                f"{DEEPSEEK_BASE_URL}/chat/completions",
-                json=payload,
-                headers={
-                    "Content-Type": "application/json",
-                    "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
-                },
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            content = data["choices"][0]["message"]["content"].strip()
-            # 清理可能的 markdown 包裹
-            content = re.sub(r'^```(?:json)?\s*', '', content)
-            content = re.sub(r'\s*```$', '', content)
-            result = json.loads(content)
-            category = result.get("category", "")
-            refined = result.get("text", "")
-            valid = {"identity", "relationships", "beliefs", "knowledge", "events", "preferences"}
-            if category in valid and refined:
-                return (category, refined.strip())
-            print(f"  ⚠ LLM 返回格式异常: {content[:100]}")
-            return ("", "")
+        content, _model = await chat(
+            [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": text},
+            ],
+            label="memory_classify",
+            max_tokens=100,
+            timeout=30.0,
+        )
+        content = content.strip()
+        # 清理可能的 markdown 包裹
+        content = re.sub(r'^```(?:json)?\s*', '', content)
+        content = re.sub(r'\s*```$', '', content)
+        result = json.loads(content)
+        category = result.get("category", "")
+        refined = result.get("text", "")
+        valid = {"identity", "relationships", "beliefs", "knowledge", "events", "preferences"}
+        if category in valid and refined:
+            return (category, refined.strip())
+        print(f"  ⚠ LLM 返回格式异常: {content[:100]}")
+        return ("", "")
     except Exception as e:
         print(f"  ⚠ LLM 调用失败: {e}")
         return ("", "")

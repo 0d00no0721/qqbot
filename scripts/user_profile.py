@@ -8,13 +8,29 @@
 """
 
 import asyncio
-import httpx
 import json
 import os
 import sys
 import traceback
 import logging
 from typing import Dict, List, Optional
+
+try:
+    from scripts.llm_pool import (
+        chat,
+        chat_sync,
+        available_models,
+        get_active_model as _pool_get_active_model,
+        LLMPoolExhausted,
+    )
+except ImportError:  # 以脚本方式直接运行时
+    from llm_pool import (
+        chat,
+        chat_sync,
+        available_models,
+        get_active_model as _pool_get_active_model,
+        LLMPoolExhausted,
+    )
 
 # ========== 一键禁用开关 ==========
 PROFILE_ENABLED = True
@@ -35,14 +51,20 @@ _LOG_DIR = os.path.join(_SCRIPT_DIR, "logs")
 os.makedirs(_LOG_DIR, exist_ok=True)
 
 # 文件日志（按启动日期命名，避免 TimedRotatingFileHandler 在 Windows 下的 os.rename 竞态）
+# 注：受限环境下 logs/ 可能整体不可写（本项目已知 ACL 问题），此时退化为"仅控制台日志"，
+#     绝不因为日志文件打不开而阻断 import（否则整个机器人都起不来）。
 from datetime import datetime as _dt
 _LOG_DATE = _dt.now().strftime("%Y-%m-%d")
-_file_handler = logging.FileHandler(
-    os.path.join(_LOG_DIR, f"bot.{_LOG_DATE}.log"),
-    encoding="utf-8",
-)
-_file_handler.setFormatter(logging.Formatter("[%(asctime)s] [画像] %(levelname)s: %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
-logger.addHandler(_file_handler)
+try:
+    _file_handler = logging.FileHandler(
+        os.path.join(_LOG_DIR, f"bot.{_LOG_DATE}.log"),
+        encoding="utf-8",
+    )
+    _file_handler.setFormatter(logging.Formatter("[%(asctime)s] [画像] %(levelname)s: %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
+    logger.addHandler(_file_handler)
+except OSError as _e:
+    # 例：PermissionError（logs/ 目录被 ACL 拒绝）——降级为控制台日志
+    _console.stream.write(f"[画像] 警告: 文件日志不可用({_e})，已降级为控制台日志\n")
 
 # ========== 配置常量 ==========
 PROFILE_UPDATE_INTERVAL = 7200     # 画像更新间隔（秒）— 每2小时一次
@@ -50,16 +72,16 @@ PROFILE_MIN_MESSAGES = 5           # 最少发言数才触发更新
 PROFILE_MAX_TOKENS = 512           # 画像描述最大 token（曾因 256 不足导致中文截断，扩至 512）
 PROFILE_API_TIMEOUT = 40           # API 超时（秒）
 
-# 主模型（中科大代理，免费）
-_API_KEY = os.getenv("DECISION_API_KEY", "")
-_API_BASE_URL = "https://api.llm.ustc.edu.cn/v1/chat/completions"
-_API_MODEL = "deepseek-v4-pro"
+# 模型出口：统一走中央模型池脚本（本地网关 http://127.0.0.1:8090/v1），
+# 池内按优先级链自动故障转移，不再保留任何云端端点。
+# 下列旧名保留仅为兼容既有引用（调用已全部走 llm_pool）。
+_API_KEY = os.getenv("LLM_POOL_API_KEY", "")
+_API_BASE_URL = ""                       # 出口由池内部决定
+_API_MODEL = ""                          # 空 = 用池的 active_model
 
-# 备用模型（DeepSeek 官方，与 Yau 同一渠道）
-_FALLBACK_API_KEY_ENV = "DEEPSEEK_API_KEY"
-_FALLBACK_API_KEY: Optional[str] = None  # 由 reverse_bot.py 通过 set_fallback_api_key 显式设置
-_FALLBACK_API_BASE_URL = "https://api.deepseek.com/v1/chat/completions"
-_FALLBACK_API_MODEL = "deepseek-chat"
+# 兼容 reverse_bot.py 的 set_fallback_api_key 调用（池自带 key，此值不再参与调用）
+_FALLBACK_API_KEY_ENV = "LLM_POOL_API_KEY"
+_FALLBACK_API_KEY: Optional[str] = None
 
 # 内容校验参数
 _CONTENT_MIN_LENGTH = 10
@@ -110,7 +132,11 @@ def save_profiles():
 
 
 def set_fallback_api_key(key: str):
-    """由启动脚本设置备用模型 API Key，避免依赖环境变量。"""
+    """兼容旧接口：由启动脚本设置备用模型 API Key。
+
+    出口已统一为中央模型池（llm_pool 自行读取 .env 的 LLM_POOL_API_KEY），
+    此函数保留仅为不破坏 reverse_bot.py 的既有调用，参数不再参与任何请求。
+    """
     global _FALLBACK_API_KEY
     _FALLBACK_API_KEY = key
 
@@ -122,7 +148,11 @@ def set_napcat_connected(connected: bool):
 
 
 def _is_school_only_hours() -> bool:
-    """判断当前是否在「仅限学校 API」时段（09:00-12:00 或 14:00-18:00）。"""
+    """判断当前是否在「单次尝试」时段（09:00-12:00 或 14:00-18:00）。
+
+    历史语义为"仅限学校 API"；出口统一为本地模型池后，该时段只表示
+    "首选模型返回内容不合格时不做第二次换模型尝试"。
+    """
     hour = _dt.now().hour
     return (9 <= hour < 12) or (14 <= hour < 18)
 
@@ -156,9 +186,9 @@ def get_profile(gid: str, uid: str) -> Optional[str]:
 
 
 async def update_profiles():
-    """遍历缓冲中的活跃用户，调用 API 更新画像，保存到文件，清空缓冲。
+    """遍历缓冲中的活跃用户，调用模型池更新画像，保存到文件，清空缓冲。
 
-    在受限时段（09:00-12:00 / 14:00-18:00）仅使用学校 API，
+    在受限时段（09:00-12:00 / 14:00-18:00）只做一次模型尝试，
     失败时根据 NapCat 连接状态分别处理（掉线→等重连 / 其他→入待重试队列+5min重试）。
     """
     if not PROFILE_ENABLED:
@@ -173,9 +203,9 @@ async def update_profiles():
 
     school_only = _is_school_only_hours()
     if school_only:
-        print(f"[画像] 当前在受限时段（09:00-12:00 / 14:00-18:00），仅使用学校 API")
+        print(f"[画像] 当前在受限时段（09:00-12:00 / 14:00-18:00），只做一次模型尝试")
     else:
-        print(f"[画像] 当前在非受限时段，支持学校→官方 API 故障转移")
+        print(f"[画像] 当前在非受限时段，内容不合格时换池内模型重试")
 
     total_users = sum(len(users) for users in buffer_snapshot.values())
     print(f"[画像] 开始更新，共 {len(buffer_snapshot)} 个群 {total_users} 个活跃用户")
@@ -301,50 +331,60 @@ def _validate_profile(text: Optional[str]) -> bool:
 
 
 async def _call_single_api(api_key: str, api_base_url: str, api_model: str,
-                           prompt: str) -> Optional[str]:
-    """调用单个 API 生成画像。返回文本，失败返回 None。"""
-    timeout = httpx.Timeout(PROFILE_API_TIMEOUT)
+                           prompt: str, *, preferred: Optional[str] = None) -> Optional[str]:
+    """调用中央模型池生成画像。返回文本，失败返回 None。
+
+    api_key / api_base_url / api_model 为历史签名保留参数（调用方仍按旧样式传），
+    实际出口已统一为 scripts/llm_pool.py 的本地网关模型池，三者不再使用。
+    preferred 指定首试模型（留空 = 池的 active_model；不在池中时自动忽略）。
+    """
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            payload = {
-                "model": api_model,
-                "max_tokens": PROFILE_MAX_TOKENS,
-                "messages": [{"role": "user", "content": prompt}],
-            }
-            headers = {
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {api_key}",
-            }
-            resp = await client.post(api_base_url, json=payload, headers=headers)
-
-            if resp.status_code != 200:
-                logger.warning("API (%s) 返回 %s: %s", api_model, resp.status_code, resp.text[:200])
-                return None
-
-            result = resp.json()
-            if "choices" in result and result["choices"]:
-                content = result["choices"][0].get("message", {}).get("content", "")
-                return content.strip() if content else None
-
-            logger.warning("API (%s) 响应格式未知: %s", api_model,
-                           json.dumps(result, ensure_ascii=False)[:200])
-            return None
-    except httpx.TimeoutException:
-        logger.warning("API (%s) 调用超时", api_model)
+        text, _model = await chat(
+            [{"role": "user", "content": prompt}],
+            label="profile",
+            max_tokens=PROFILE_MAX_TOKENS,
+            timeout=float(PROFILE_API_TIMEOUT),
+            preferred=preferred or None,
+        )
+        return text.strip() if text and text.strip() else None
+    except LLMPoolExhausted as e:
+        logger.warning("模型池已耗尽: %s", e)
         return None
     except Exception as e:
-        logger.error("API (%s) 调用失败: %s", api_model, e)
+        logger.error("模型池调用失败: %s", e)
         return None
+
+
+def _alternate_pool_model() -> str:
+    """取池内与当前 active_model 不同的第一个模型，作为内容不合格时的"备用"。
+
+    池内取不到时返回空串（此时 _call_single_api 会走池的默认顺序）。
+    """
+    try:
+        models = available_models()
+    except Exception:
+        return ""
+    if not models:
+        return ""
+    try:
+        active = str(_pool_get_active_model() or "").strip()
+    except Exception:
+        active = ""
+    for model in models:
+        if model != active:
+            return model
+    return models[0]
 
 
 async def _call_profile_api(msgs: List[str], existing: Optional[str],
                             school_only: bool = False) -> Optional[str]:
-    """调用 API 生成/更新用户画像。
+    """调用模型池生成/更新用户画像。
 
     Args:
         msgs: 用户近期发言列表
         existing: 已有画像（首次为 None）
-        school_only: True=仅用学校 API，不切官方（受限时段）；False=学校→官方 fallback
+        school_only: True=受限时段，只做一次模型尝试；
+                     False=内容不合格时换池内另一个模型再试一次
 
     Returns:
         画像文本，失败返回 None。
@@ -366,39 +406,40 @@ async def _call_profile_api(msgs: List[str], existing: Optional[str],
             f"直接输出画像文本，不要加任何前缀或解释。"
         )
 
-    # Step 1: 尝试主模型（学校 API）
+    # Step 1: 尝试池内首选模型（active_model，池内部自带降档）
     result = await _call_single_api(_API_KEY, _API_BASE_URL, _API_MODEL, prompt)
     if result and _validate_profile(result):
         return result
 
     if school_only:
-        # 受限时段：不切换官方 API，直接返回
+        # 受限时段：不做第二次尝试（保留历史行为，避免额外消耗）
         if result and not _validate_profile(result):
-            logger.warning("主模型画像内容异常，受限时段无备用模型可用")
+            logger.warning("首选模型画像内容异常，受限时段不做第二次尝试")
         else:
-            logger.warning("主模型调用失败，受限时段无备用模型可用")
+            logger.warning("首选模型调用失败，受限时段不做第二次尝试")
         return None
 
     if result and not _validate_profile(result):
-        logger.warning("主模型画像内容异常（含错误关键词/长度异常），切换备用模型")
+        logger.warning("首选模型画像内容异常（含错误关键词/长度异常），切换池内备用模型")
     else:
-        logger.warning("主模型调用失败或无返回，切换备用模型")
+        logger.warning("首选模型调用失败或无返回，切换池内备用模型")
 
-    # Step 2: 尝试备用模型（DeepSeek 官方，与 Yau 同一渠道）
-    fb_key = _FALLBACK_API_KEY or os.environ.get(_FALLBACK_API_KEY_ENV, "")
-    if not fb_key:
-        logger.error("备用模型 API Key (%s) 未设置，无法切换", _FALLBACK_API_KEY_ENV)
-        return result or None  # 返回主模型结果（可能无效，容忍）
-
-    logger.info("调用备用模型 %s", _FALLBACK_API_MODEL)
-    fb_result = await _call_single_api(fb_key, _FALLBACK_API_BASE_URL, _FALLBACK_API_MODEL, prompt)
+    # Step 2: 换池内另一个模型再试一次（内容不合格时换模型比原样重试更有效）
+    fb_model = _alternate_pool_model()
+    if fb_model:
+        logger.info("调用池内备用模型 %s", fb_model)
+    else:
+        logger.warning("池内无可切换的备用模型，按池默认顺序重试")
+    fb_result = await _call_single_api(
+        "", "", fb_model, prompt, preferred=fb_model or None
+    )
     if fb_result and _validate_profile(fb_result):
         logger.info("备用模型画像生成成功")
         return fb_result
 
     if result:
-        # 备用也失败，返回主模型结果（容忍无效内容，总比没有好）
-        logger.warning("备用模型也失败，回退使用主模型结果")
+        # 备用也失败，返回首选模型结果（容忍无效内容，总比没有好）
+        logger.warning("备用模型也失败，回退使用首选模型结果")
         return result
 
     logger.error("两模型均失败，画像生成失败")

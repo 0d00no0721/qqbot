@@ -14,6 +14,7 @@ load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 import asyncio
 import json
 import logging
+import re
 import sys
 import traceback
 import time
@@ -54,19 +55,6 @@ from scripts.command_handler import (
     init_handlers,
 )
 
-# ========== 功能开关：虚拟股市 ==========
-VS_ENABLED = False  # 设为 True 启用虚拟股市板块
-
-# ========== 虚拟股板块 ==========
-if VS_ENABLED:
-    from scripts.virtual_stock import (
-        on_message as vs_on_message,
-        init_group_data as vs_init_group,
-        start_scheduler as vs_start_scheduler,
-        stop_scheduler as vs_stop_scheduler,
-        register_group as vs_register_group,
-    )
-
 # ========== 脚本所在目录 ==========
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -75,7 +63,7 @@ import threading
 _features_cache: dict = {"data": None, "mtime": 0.0}
 _features_lock = threading.Lock()
 _FEATURES_FILE = os.path.join(SCRIPT_DIR, "config", "group_features.json")
-_FEATURE_KEYS = ("decision_engine", "plus_one", "commands", "newcomer_welcome", "profile_record")
+_FEATURE_KEYS = ("decision_engine", "plus_one", "commands", "newcomer_welcome", "profile_record", "vision")
 
 
 def _get_group_features(gid: str) -> dict:
@@ -137,10 +125,15 @@ def _cleanup_old_logs(log_dir: str, keep_days: int = 30) -> None:
 
 _cleanup_old_logs(LOG_DIR)
 
-_file_handler = logging.FileHandler(LOG_FILE, encoding="utf-8")
-_file_handler.setFormatter(logging.Formatter("[%(asctime)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
-_file_handler.setLevel(logging.INFO)
-bot_logger.addHandler(_file_handler)
+_file_handler = None
+try:
+    _file_handler = logging.FileHandler(LOG_FILE, encoding="utf-8")
+    _file_handler.setFormatter(logging.Formatter("[%(asctime)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
+    _file_handler.setLevel(logging.INFO)
+    bot_logger.addHandler(_file_handler)
+except OSError as _e:
+    # 例：PermissionError（logs/ 目录被 ACL 拒绝）——降级为仅控制台日志，不阻断 import
+    _console.stream.write(f"[警告] 无法写入文件日志 logs\\bot.{_LOG_DATE}.log（权限不足），已降级为仅控制台日志\n")
 
 # ========== 配置 ==========
 HOST = "0.0.0.0"
@@ -150,14 +143,17 @@ PORT = 8080
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 
 # ========== 决策引擎专用配置 ==========
+# 注：以下三个值在 DecisionEngine.__init__ 函数体内从未被消费（惰性值，实弹出口由
+#     scripts/llm_pool.py 统一决定），此处仅为兼容既有代码结构保留；值已改指本地网关，
+#     确保全仓不再残留任何云端字面量。
 DECISION_API_KEY = os.getenv("DECISION_API_KEY", "")
-DECISION_API_BASE = "https://api.llm.ustc.edu.cn/v1"
+DECISION_API_BASE = "http://127.0.0.1:8090/v1"
 
 # ========== 发言决策引擎 ==========
 decision_engine = DecisionEngine(
     api_key=DECISION_API_KEY,
     api_base_url=DECISION_API_BASE,
-    api_model="deepseek-v4-pro",
+    api_model="deepseek-flash",
     fallback_api_key=DEEPSEEK_API_KEY,
 )
 
@@ -222,6 +218,92 @@ async def send_group_file(websocket, group_id: int, file_path: str):
     await websocket.send(json.dumps(payload))
 
 
+# ========== 识图（V2 接线） ==========
+# 纪律（PM 定稿）：
+#   - 只认 `bot_mentioned`（@bot / 别名命中）；贴图默认不识别（被引用提问除外）；
+#   - 同图哈希窗口内只识一次；每群滑动窗口限流（≤ VISION_MAX_PER_HOUR 张/小时）；
+#   - 直链 rkey 会过期 → **收到消息就立刻下载**，失效/失败/描述空一律静默降级，
+#     只写一行日志，**绝不阻断文本链**；
+#   - 成功后把 `[图片: 描述]` 拼进消息文本交给既有决策链（复用全部现有逻辑），
+#     **绝不把 base64/字节塞进 decision_engine 的上下文缓冲**。
+VISION_MAX_PER_HOUR = 10
+VISION_RATE_WINDOW = 3600    # 限流窗口（秒）
+VISION_RECENT_WINDOW = 120   # 路径③④：图后直接 @ 的时间窗（秒）
+VISION_SEEN_WINDOW = 60      # 同图去重窗口（秒）
+VISION_PICK_MAX = 3          # 单次最多识几张
+
+
+def _cq_reply_id(raw_message: str) -> str:
+    """抽取 `[CQ:reply,id=…]` 的被引用 message_id（按 CQ 码结构解析，避免误命中）。"""
+    for match in re.finditer(r'\[CQ:(?P<type>[a-zA-Z_]+)(?P<params>(?:,[^\],]*)*)\]', str(raw_message or "")):
+        if match.group("type").lower() != "reply":
+            continue
+        for chunk in match.group("params").split(","):
+            key, _, value = chunk.partition("=")
+            if key.strip() == "id" and value.strip():
+                return value.strip()
+    return ""
+
+
+async def _describe_triggered_image(gid_str: str, message_images: list, raw_message: str,
+                                    uid_str: str, clean_message: str) -> list:
+    """按「本消息 → 引用 → 最近-同人 → 最近-本群」选图并识图。
+
+    返回 `[图片: 描述]` 结果文本列表（0~1 条）。**任何失败都只是返回空列表**，
+    由调用层决定要不要拼进消息文本；本函数不发送消息、不改全局状态（除限流计数）。
+    """
+    from scripts import image_cache, image_utils, vision
+    from scripts.commands import _state
+
+    # ---- 限流（先占额再识图，宁可少识不可无限识） ----
+    allowed, used = _state.vision_rate_ok(gid_str, VISION_MAX_PER_HOUR, VISION_RATE_WINDOW)
+    if not allowed:
+        bot_logger.info(f"[识图] 跳过（限流：本群 1h 内已识 {used} 张，上限 {VISION_MAX_PER_HOUR}）")
+        return []
+
+    candidates, source = image_cache.select_candidates(
+        raw_message, gid_str, uid_str,
+        message_images=message_images,
+        within=VISION_RECENT_WINDOW,
+        limit=VISION_PICK_MAX,
+    )
+    if not candidates:
+        bot_logger.info(f"[识图] 跳过（没有可用图片：引用未命中缓存且窗口内无图）")
+        return []
+
+    bot_logger.info(f"[识图] 触发：路径={source} 候选={len(candidates)} 张")
+
+    described: list = []
+    for meta in candidates:
+        tag = str(meta.get("file") or image_cache.image_signature(meta) or "?")
+        # 闸门 1：贴图/动画表情默认跳过（引用路径来的不跳——用户明确引用了它）
+        if source != "引用" and image_utils.is_sticker(meta):
+            bot_logger.info(f"[识图] 跳过（贴图/表情：{tag}）")
+            continue
+        # 闸门 2：同图哈希窗口内去重
+        sig = image_cache.image_hash(meta)
+        if sig and image_cache.seen_hash(gid_str, sig, VISION_SEEN_WINDOW):
+            bot_logger.info(f"[识图] 跳过（同图去重：{tag}）")
+            continue
+        # 闸门 3：直链可能已过期（rkey 时效）→ fetch_image 返回 None，静默降级
+        img_bytes = image_utils.fetch_image(meta)
+        if not img_bytes:
+            bot_logger.info(f"[识图] 跳过（下载失败/直链过期：{tag}）")
+            continue
+        data_url = image_utils.to_data_url(img_bytes)
+        if not data_url:
+            bot_logger.info(f"[识图] 跳过（图片解码失败：{tag}）")
+            continue
+        ok, desc = await vision.describe(data_url, hint=clean_message)
+        if not ok or not desc:
+            bot_logger.info(f"[识图] 跳过（识别失败/空描述：{tag}）")
+            continue
+        described.append(f"[图片: {desc}]")
+        bot_logger.info(f"[识图] 成功：{tag} → {desc}")
+        break  # 一次只识一张：多条候选里取最新的那张即可
+    return described
+
+
 # ========== 消息处理 ==========
 async def handle_message(websocket, data: dict):
     t_req = time.time()
@@ -252,33 +334,31 @@ async def handle_message(websocket, data: dict):
     if not any(_feature_on(gid_str, k) for k in _FEATURE_KEYS):
         return
 
-    # ===== 虚拟股：注册群 + 采集消息指标 =====
-    uid_str_vs = str(user_id)
-    if VS_ENABLED:
-        try:
-            vs_register_group(gid_str)
-        except Exception:
-            pass
-
     # ===== 语音消息转文字 =====
     if "[CQ:record" in raw_message:
         raw_message = await process_voice_message(raw_message)
 
     # 清理 CQ 码，检查 @
-    import re
     clean_message = re.sub(r'\[CQ:\w+,[^\]]*\]', '', raw_message).strip()
     bot_mentioned = f"[CQ:at,qq={BOT_QQ}]" in raw_message
 
-    # ===== 纯图片/表情消息忽略 =====
-    if not clean_message:
-        return
+    # ===== 图片解析 + 本地消息缓存（解引用用） =====
+    # 只要有图就无条件入缓存：手机端「先发图 → 再引用提问」时，提问那条消息里没有图,
+    # 只能靠 message_id → 图片元数据 的本地映射命中（OneBot get_image 是请求-响应式，
+    # 且历史直链 rkey 分钟级过期，实测不可用）。**只存元数据，绝不存字节/base64。**
+    from scripts import image_cache, image_utils, vision  # noqa: F401  (vision 供 _describe_triggered_image 使用)
+    uid_str = str(user_id)
+    nickname = data.get("sender", {}).get("nickname", "")
+    message_images = image_utils.parse_cq_images(raw_message)
+    if message_images:
+        image_cache.remember(
+            gid_str, data.get("message_id"), uid_str, nickname,
+            images=message_images, raw_message=raw_message,
+        )
 
-    # ===== 虚拟股：采集消息指标（所有消息，不限@bot） =====
-    if VS_ENABLED:
-        try:
-            vs_on_message(gid_str, uid_str_vs, clean_message, is_bot_command=bot_mentioned)
-        except Exception:
-            pass
+    # ===== 纯图片/表情消息忽略（无文字且没 @bot → 只缓存不响应） =====
+    if not clean_message and not bot_mentioned:
+        return
 
     # ===== 命令处理 =====
     if bot_mentioned and _feature_on(gid_str, "commands"):
@@ -319,13 +399,37 @@ async def handle_message(websocket, data: dict):
                     bot_logger.info(f"[名字匹配] '{alias_lower}' → 视为 @bot，群{alias_gid}")
                     break
 
+    # ===== 识图（闸门：@bot/别名 + vision 功能位 + 限流 + 贴图过滤 + 同图去重） =====
+    # 位置刻意放在"别名检测之后、决策引擎之前"：这样别名命中也算触发（与 @ 同权），
+    # 且 `clean_or_raw` 已经算好，注入描述后可与历史缓存里的原文精确比对（不污染 +1/画像）。
+    text_for_bot = clean_or_raw
+    if bot_mentioned and _feature_on(gid_str, "vision"):
+        try:
+            vision_desc = await _describe_triggered_image(
+                gid_str, message_images, raw_message, uid_str, clean_message,
+            )
+        except Exception as e:
+            # 识图是增强项：任何意外都只记一行日志，文本链照常走
+            bot_logger.info(f"[识图] 出错（已忽略，不影响文本回复）: {e}")
+            vision_desc = []
+        if vision_desc:
+            # 方案 a（PM 定稿）：把 `[图片: 描述]` 拼进消息文本，复用既有决策链
+            # （人设/记忆/密度/冷却全部生效）；**禁止**把图字节/base64 放进上下文缓冲。
+            # 只改"给决策引擎的文本"，不动 clean_message（保持 +1 检测/历史缓存/画像
+            # 里存的仍是用户原文，避免描述文本被当成复读内容）。
+            if not clean_message or clean_or_raw.startswith("[CQ:"):
+                # 纯图（或图+@）消息：`clean_or_raw` 退化成的是**原始 CQ 码**，
+                # 直接喂给模型既难看又浪费 token → 只给描述本身
+                text_for_bot = vision_desc[0]
+                bot_logger.info("[识图] 本条消息只有图 + @：注入描述后进入决策链")
+            else:
+                text_for_bot = f"{clean_or_raw}\n{vision_desc[0]}".strip()
+
     # ===== 决策引擎 =====
-    uid_str = str(user_id)
     if _feature_on(gid_str, "decision_engine"):
         t_decision = time.time()
-        nickname = data.get("sender", {}).get("nickname", "")
         try:
-            decision_engine.add_message(gid_str, uid_str, nickname, clean_or_raw)
+            decision_engine.add_message(gid_str, uid_str, nickname, text_for_bot)
 
             if PROFILE_ENABLED:
                 profile_text = get_profile(gid_str, uid_str)
@@ -334,7 +438,7 @@ async def handle_message(websocket, data: dict):
                         f"[用户画像: {profile_text}]")
 
             should_reply, reply_text = await decision_engine.should_reply(
-                message=clean_or_raw,
+                message=text_for_bot,
                 user_id=uid_str,
                 group_id=gid_str,
                 is_at_bot=bot_mentioned,
@@ -522,22 +626,6 @@ async def main():
     mystery_task = asyncio.create_task(mystery_number_task())
     background_tasks = [profile_task, mystery_task]
 
-    # ===== 虚拟股调度器 =====
-    if VS_ENABLED:
-        async def vs_broadcast(group_id: str, message: str):
-            """虚拟股广播回调：通过当前 WebSocket 发送群消息。"""
-            ws = current_websocket
-            if ws is None:
-                bot_logger.warning(f"[虚拟股] WebSocket 未连接，广播到群 {group_id} 失败")
-                return
-            try:
-                await send_message(ws, int(group_id), message)
-            except Exception as e:
-                bot_logger.error(f"[虚拟股] 广播失败: {e}")
-
-        vs_start_scheduler(vs_broadcast)
-        bot_logger.info("[虚拟股] 调度器已启动（8 个定时任务）")
-
     async def custom_process_request(path, request_headers):
         return None
 
@@ -559,8 +647,6 @@ async def main():
     finally:
         server.close()
         await server.wait_closed()
-        if VS_ENABLED:
-            vs_stop_scheduler()
         for task in background_tasks:
             task.cancel()
         await asyncio.gather(*background_tasks, return_exceptions=True)

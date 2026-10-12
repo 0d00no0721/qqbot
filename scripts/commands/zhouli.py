@@ -1,11 +1,13 @@
 # -*- coding: utf-8 -*-
-"""周礼 — 将大白话改写成"合乎周礼"白话翻译腔（双模型故障转移）。"""
+"""周礼 — 将大白话改写成"合乎周礼"白话翻译腔（走中央模型池，自动故障转移）。"""
 
-import os
 import re
 import time
 
-import httpx
+try:
+    from scripts.llm_pool import chat, chat_sync, available_models, LLMPoolExhausted
+except ImportError:  # 以脚本方式直接运行时
+    from llm_pool import chat, chat_sync, available_models, LLMPoolExhausted
 
 from . import _state
 from ._registry import register, CommandContext
@@ -36,12 +38,7 @@ ZHOULI_SYSTEM_PROMPT = """你是"大周礼时代"评论区的优秀文案作者�
 20. 输出长度控制在 150-220 字，一至两个例子，起承转合。不要超过 250 字。
 21. 输出只包含改写结果，不解释创作过程，不加标题，不使用 Markdown。"""
 
-ZHOULI_PRIMARY_API_KEY = os.getenv("DECISION_API_KEY", "")
-ZHOULI_PRIMARY_URL = "https://api.llm.ustc.edu.cn/v1/chat/completions"
-ZHOULI_PRIMARY_MODEL = "deepseek-v4-pro"
-ZHOULI_FALLBACK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
-ZHOULI_FALLBACK_URL = "https://api.deepseek.com/v1/chat/completions"
-ZHOULI_FALLBACK_MODEL = "deepseek-chat"
+# 出口统一为中央模型池（本地网关），不再持有任何云端端点与 key
 ZHOULI_MAX_TOKENS = 300
 ZHOULI_TIMEOUT = 30
 
@@ -73,60 +70,40 @@ def check_zhouli_rate_limit(user_id: str) -> bool:
     return True
 
 
-async def call_zhouli_api(text: str, api_key: str, url: str, model: str) -> str:
-    """调用单个 API 生成周礼文案"""
-    timeout = httpx.Timeout(ZHOULI_TIMEOUT)
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        payload = {
-            "model": model,
-            "messages": [
-                {"role": "system", "content": ZHOULI_SYSTEM_PROMPT},
-                {"role": "user", "content": f"请将下面这句话改写得合乎周礼：\n<原话>\n{text}\n</原话>"},
-            ],
-            "max_tokens": ZHOULI_MAX_TOKENS,
-            "temperature": 0.9,
-        }
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}",
-        }
-        resp = await client.post(url, json=payload, headers=headers)
-        resp.raise_for_status()
-        result = resp.json()
-        return result["choices"][0]["message"]["content"]
+async def call_zhouli_api(text: str, preferred: str = "") -> str:
+    """调用中央模型池生成周礼文案。
+
+    preferred 指定首试模型（留空则用 config/active_model.json 的当前模型）；
+    池内部按优先级链自动降档，全部失败抛 LLMPoolExhausted。
+    """
+    messages = [
+        {"role": "system", "content": ZHOULI_SYSTEM_PROMPT},
+        {"role": "user", "content": f"请将下面这句话改写得合乎周礼：\n<原话>\n{text}\n</原话>"},
+    ]
+    raw, model = await chat(
+        messages,
+        label="zhouli",
+        max_tokens=ZHOULI_MAX_TOKENS,
+        temperature=0.9,
+        timeout=float(ZHOULI_TIMEOUT),
+        preferred=preferred or None,
+    )
+    ctx_log(f"[周礼] 模型池命中 ({model})")
+    return raw
 
 
 async def call_zhouli(text: str) -> str:
-    """调用周礼 API，优先中科大代理，失败后切 DeepSeek 官方"""
-    # 尝试主模型
+    """调用周礼 API（池内按优先级链故障转移），全部失败返回空串"""
     try:
-        if ZHOULI_PRIMARY_API_KEY:
-            ctx_log(f"[周礼] 调用主模型 ({ZHOULI_PRIMARY_MODEL})")
-            raw = await call_zhouli_api(text, ZHOULI_PRIMARY_API_KEY, ZHOULI_PRIMARY_URL, ZHOULI_PRIMARY_MODEL)
-            if raw and raw.strip():
-                ctx_log(f"[周礼] 主模型成功")
-                return clean_zhouli_text(raw)
-            else:
-                ctx_log("[周礼] 主模型返回空内容")
-    except httpx.HTTPStatusError as e:
-        ctx_log(f"[周礼] 主模型 HTTP {e.response.status_code}: {e.response.text[:200]}")
+        raw = await call_zhouli_api(text)
+        if raw and raw.strip():
+            ctx_log("[周礼] 生成成功")
+            return clean_zhouli_text(raw)
+        ctx_log("[周礼] 模型返回空内容")
+    except LLMPoolExhausted as e:
+        ctx_log(f"[周礼] 模型池耗尽: {e}")
     except Exception as e:
-        ctx_log(f"[周礼] 主模型异常: {e}")
-
-    # 尝试备用模型
-    try:
-        if ZHOULI_FALLBACK_API_KEY:
-            ctx_log(f"[周礼] 切备用模型 ({ZHOULI_FALLBACK_MODEL})")
-            raw = await call_zhouli_api(text, ZHOULI_FALLBACK_API_KEY, ZHOULI_FALLBACK_URL, ZHOULI_FALLBACK_MODEL)
-            if raw and raw.strip():
-                ctx_log(f"[周礼] 备用模型成功")
-                return clean_zhouli_text(raw)
-            else:
-                ctx_log("[周礼] 备用模型返回空内容")
-    except httpx.HTTPStatusError as e:
-        ctx_log(f"[周礼] 备用模型 HTTP {e.response.status_code}: {e.response.text[:200]}")
-    except Exception as e:
-        ctx_log(f"[周礼] 备用模型异常: {e}")
+        ctx_log(f"[周礼] 调用异常: {e}")
 
     return ""
 

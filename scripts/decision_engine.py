@@ -29,6 +29,25 @@ from sklearn.metrics.pairwise import cosine_similarity
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# ---------- 中央模型池（本地网关，唯一模型出口） ----------
+# 双路兼容导入：reverse_bot.py 以包方式导入本模块时 scripts/ 不在 sys.path，
+# 而本文件被当脚本直接执行时 sys.path[0]=scripts/。两种方式都要能导入成功。
+try:
+    from scripts.llm_pool import chat, chat_sync, available_models, LLMPoolExhausted
+except ImportError:  # 以脚本方式直接运行时（sys.path[0]=scripts/）
+    from llm_pool import chat, chat_sync, available_models, LLMPoolExhausted
+
+
+def _pool_available_models() -> list:
+    """从中央模型池派生可用模型列表（config/model_pool.json 优先级链去重、保序）。
+
+    读不到池配置时返回空列表（绝不抛异常拖垮引擎初始化）。
+    """
+    try:
+        return list(available_models())
+    except Exception:
+        return []
+
 
 # ---------- 分类标签 ----------
 NEEDS_REPLY_LABELS = ["需要回复", "不需要回复"]
@@ -44,6 +63,11 @@ _EMOJI_ONLY = re.compile(
 
 # ---------- 昵称前缀剥离（防止 LLM 模仿上下文格式输出 "[昵称]: 内容"） ----------
 _NICKNAME_PREFIX = re.compile(r'^\[.+?\][:：]\s*')
+
+# ---------- CQ 码剥离（仅用于生成 target 的"送模型看的内容"） ----------
+# 群聊上下文 context 不做任何删改；这里只是避免把 [CQ:at,…] / [CQ:image,…]
+# 原样塞进「你需要回应的最新消息」——那会与"不要包含 CQ 码"的指令自相矛盾。
+_CQ_CODE = re.compile(r"\[CQ:[^\]]*\]")
 
 # ---------- 内容安全：敏感关键词列表 ----------
 # 安全规则完全由代码层执行，不依赖 LLM prompt。
@@ -81,14 +105,20 @@ LOG_DIR = os.path.join(SCRIPT_DIR, "logs")
 os.makedirs(LOG_DIR, exist_ok=True)
 
 # 文件日志（按启动日期命名，避免 TimedRotatingFileHandler 在 Windows 下的 os.rename 竞态）
+# 注：受限环境下 logs/ 可能整体不可写（本项目已知 ACL 问题），此时退化为"仅控制台日志"，
+#     绝不因为日志文件打不开而阻断 import（否则整个机器人都起不来）。
 from datetime import datetime as _dt
 _LOG_DATE = _dt.now().strftime("%Y-%m-%d")
-_file_handler = logging.FileHandler(
-    os.path.join(LOG_DIR, f"bot.{_LOG_DATE}.log"),
-    encoding="utf-8",
-)
-_file_handler.setFormatter(logging.Formatter("[%(asctime)s] [熔断] %(levelname)s: %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
-logger.addHandler(_file_handler)
+try:
+    _file_handler = logging.FileHandler(
+        os.path.join(LOG_DIR, f"bot.{_LOG_DATE}.log"),
+        encoding="utf-8",
+    )
+    _file_handler.setFormatter(logging.Formatter("[%(asctime)s] [熔断] %(levelname)s: %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
+    logger.addHandler(_file_handler)
+except OSError as _e:
+    # 例：PermissionError（logs/ 目录被 ACL 拒绝）——降级为仅控制台日志
+    _console.stream.write(f"[警告] 无法写入文件日志 logs\\bot.{_LOG_DATE}.log（权限不足），已降级为仅控制台日志\n")
 
 
 class ContextRingBuffer:
@@ -153,6 +183,8 @@ class DecisionEngine:
     SIMILARITY_THRESHOLD = 0.75
     # 相似度去重保留的最近回复数
     SIMILARITY_WINDOW = 3
+    # 防复读：注入 prompt 的"最近自己说过的话"条数
+    ANTI_REPEAT_WINDOW = 3
 
     def __init__(
         self,
@@ -170,6 +202,9 @@ class DecisionEngine:
         self._last_reply_time: dict[str, float] = {}       # 冷却计时（按群）
         self._recent_replies: defaultdict[str, deque] = \
             defaultdict(lambda: deque(maxlen=self.SIMILARITY_WINDOW))  # 相似度去重
+        # 防复读：本群最近 3 条**自己发出的**回复（下发为 avoid_recent + 记录相似度指标）
+        self._recent_bot_replies: defaultdict[str, deque] = \
+            defaultdict(lambda: deque(maxlen=self.ANTI_REPEAT_WINDOW))
         self._debug_info: dict = {}
         self._classifier = None
 
@@ -349,14 +384,11 @@ class DecisionEngine:
 
     # ---------- 模型切换 ----------
 
-    # 可用模型列表（中科大代理）
-    AVAILABLE_MODELS = [
-        "deepseek-v4-flash-ascend",
-        "glm-5.2",
-        "deepseek-v4-pro",
-        "qwen3.6-chat",
-        "qwen3.6-reasoner",
-    ]
+    # 可用模型列表（由中央模型池 config/model_pool.json 的优先级链派生，导入时初始化）
+    AVAILABLE_MODELS = _pool_available_models()
+
+    # active_model.json 缺失/非法时的兜底模型（本地网关 T1 首档）
+    DEFAULT_MODEL = "deepseek-flash"
 
     @staticmethod
     def _get_model_config_path() -> str:
@@ -370,18 +402,21 @@ class DecisionEngine:
     def get_active_model() -> dict:
         """获取当前激活的主模型配置。
         返回: {"model": "...", "api_base_url": "...", "api_key": "..."}
+
+        model 取 config/active_model.json（非法/缺失时回退 DEFAULT_MODEL）；
+        端点与密钥统一取本地网关模型池配置，不再有云端兜底。
         """
         default = {
-            "model": "deepseek-v4-pro",
-            "api_base_url": "https://api.llm.ustc.edu.cn/v1/chat/completions",
-            "api_key": os.getenv("DECISION_API_KEY", ""),
+            "model": DecisionEngine.DEFAULT_MODEL,
+            "api_base_url": os.getenv("LLM_POOL_BASE_URL", "http://127.0.0.1:8090/v1"),
+            "api_key": os.getenv("LLM_POOL_API_KEY", ""),
         }
         path = DecisionEngine._get_model_config_path()
         try:
             with open(path, "r", encoding="utf-8") as f:
                 cfg = json.load(f)
             model = cfg.get("model", default["model"])
-            if model not in DecisionEngine.AVAILABLE_MODELS:
+            if not model or model not in DecisionEngine.AVAILABLE_MODELS:
                 return default
             return {
                 "model": model,
@@ -395,6 +430,7 @@ class DecisionEngine:
     def set_active_model(model_name: str) -> Tuple[bool, str]:
         """设置主模型。
         返回: (success, message)
+        仅接受中央模型池 config/model_pool.json 优先级链中的模型。
         """
         if model_name not in DecisionEngine.AVAILABLE_MODELS:
             return (False, f"模型 '{model_name}' 不可用")
@@ -482,7 +518,8 @@ class DecisionEngine:
     @staticmethod
     def get_group_characters() -> dict:
         """读取 group_characters.json，返回 {gid: char_name, ...}。
-        文件不存在时自动创建（使用全局默认角色 + 当前群）。
+        文件不存在/损坏时自动创建为空映射 {}（不硬编码任何群号），
+        让所有群统一回退 active_character.json 的全局默认角色。
         """
         group_file = os.path.join(DecisionEngine._get_config_dir(), "group_characters.json")
         try:
@@ -497,8 +534,9 @@ class DecisionEngine:
         active_cfg = DecisionEngine.get_active_character()
         default_char = active_cfg.get("character", "")
         if default_char:
-            # 用当前主群初始化
-            result = {"755471390": default_char}
+            # 不硬编码任何群号：文件丢失时重建为空映射，
+            # 所有群统一回退 active_character.json 的全局默认角色
+            result = {}
         else:
             result = {}
 
@@ -775,7 +813,33 @@ class DecisionEngine:
         if self._is_gibberish(text_stripped, gibberish_ratio):
             return (False, "疑似乱码")
 
+        # 错误话术检测（D6 修复）
+        # error_keywords 是"模型没答上来"的兜底话术（Internal error / I cannot /
+        # 这个话题我不太了解 …）。命中即判内容异常 → 上游 _generate_reply_with_failover
+        # 走既有熔断路径（切备用脚本，备用也异常则放弃回复），避免把报错话术发到群里。
+        # 判定方式与 _content_filter 同风格（strip + 小写化后子串匹配），大小写不敏感。
+        hit = self._match_error_keyword(text_stripped, error_kws)
+        if hit:
+            return (False, f"命中错误话术关键词 '{hit}'")
+
         return (True, None)
+
+    @staticmethod
+    def _match_error_keyword(text: str, error_keywords) -> str:
+        """返回命中的第一个错误关键词（无命中/配置异常返回 ""）。
+
+        大小写不敏感的子串匹配（与 _content_filter 同风格）。配置为空或不是列表时
+        直接放行——配置缺项不该让机器人整体不回复。
+        """
+        if not error_keywords or not isinstance(error_keywords, (list, tuple)):
+            return ""
+        text_lower = text.lower()
+        for kw in error_keywords:
+            if not isinstance(kw, str) or not kw:
+                continue
+            if kw.lower() in text_lower:
+                return kw
+        return ""
 
     @staticmethod
     def _is_gibberish(text: str, max_ratio: float = 0.6) -> bool:
@@ -809,6 +873,7 @@ class DecisionEngine:
         gid: str,
         max_tokens: int = 500,
         api_key: str = "",
+        target: Optional[dict] = None,
     ) -> str:
         """通过子进程调用独立模型脚本。
 
@@ -816,8 +881,28 @@ class DecisionEngine:
         启动子进程，通过 stdin 发送输入，读取 stdout 中的 JSON 输出。
 
         参数 api_key 非空时，覆盖 active_model 的密钥（用于备用模型走独立 key）。
+        模型池接入后：api_base_url/api_key 均来自本地网关池配置，
+        active_model["model"] 额外以 preferred_model 字段下发（子进程优先尝试该模型，
+        失败仍按池优先级链降档）。
+
+        参数 target：本轮**要回应的那条消息**（dict：nickname/uid/content），
+        或 None（无明确回应对象时）。非空时随 stdin 下发 "target" 字段，
+        子进程据此改用「定向回复」prompt，让模型针对这条消息作答，
+        而不是在整段群聊记录里自由挑话头。无 target 时该字段为 null，
+        子进程逐字沿用旧 prompt（向后兼容 + 回放基线）。
+
+        字段 "avoid_recent"：本群最近 3 条**自己发出的**回复（防复读提示，
+        需配合 target 使用；无 target 时子进程忽略）。
         """
-        logger.info("[调试] _call_model_script 被调用: script=%s, gid=%s", os.path.basename(script_path), gid)
+        logger.info("[调试] _call_model_script 被调用: script=%s, gid=%s",
+                    os.path.basename(script_path), gid)
+        if target:
+            logger.info("[定向回复] 目标: %s(%s) | 内容: %s",
+                        target.get("nickname") or "?", target.get("uid") or "?",
+                        (target.get("content") or "")[:80])
+        else:
+            logger.info("[定向回复] 本轮无 target（沿用旧 prompt）")
+
         context_text = await self._format_context(gid)
         system_prompt = self._load_character(gid)
 
@@ -827,13 +912,19 @@ class DecisionEngine:
         # 若未显式传入 api_key，则使用主模型配置的 key
         effective_key = api_key if api_key else active_model["api_key"]
 
+        # 防复读：本群最近自己说过的回复（最多 3 条，非空）
+        avoid_recent = [r for r in self._recent_bot_replies.get(gid, ()) if r]
+
         input_data = json.dumps({
             "context": context_text,
             "persona": system_prompt,
             "max_tokens": max_tokens,
             "model": active_model["model"],
+            "preferred_model": active_model["model"],
             "api_base_url": active_model["api_base_url"],
             "api_key": effective_key,
+            "target": target,
+            "avoid_recent": avoid_recent,
         }, ensure_ascii=False)
 
         python_exe = sys.executable or "python"
@@ -879,21 +970,30 @@ class DecisionEngine:
 
     # ---------- 故障转移回复生成（子进程隔离） ----------
 
-    async def _generate_reply_with_failover(self, gid: str) -> str:
+    async def _generate_reply_with_failover(self, gid: str,
+                                            target: Optional[dict] = None) -> str:
         """生成回复，主模型失败时自动切换备用模型。
 
         两个模型是独立脚本（子进程），各自维护独立的网络状态，
         主模型的网络问题不会影响备用模型。
+        两个子进程内部都只走本地网关模型池（scripts/llm_pool.py），
+        因此这里不再传递任何云端密钥——"主→备"这层熔断语义保持不变。
+
+        参数 target：本轮要回应的消息（见 _call_model_script），主/备两次调用
+        使用**同一个** target，保证降档后回应对象不漂移。
         """
         max_tokens = self.config.get("reply_max_tokens", 500)
 
         # Step 1: 尝试主模型（独立子进程）
-        reply = await self._call_model_script(self._primary_script, gid, max_tokens)
+        reply = await self._call_model_script(
+            self._primary_script, gid, max_tokens, target=target
+        )
 
         if reply:
             is_valid, reason = self._validate_content(reply)
             if is_valid:
                 logger.info("[熔断] 主模型回复有效")
+                self._record_bot_reply_metric(gid, reply)
                 return reply
             else:
                 logger.warning("[熔断] 主模型内容异常 (%s)，切换至备用模型 | 回复内容: %s", reason, reply[:100])
@@ -901,17 +1001,17 @@ class DecisionEngine:
             logger.warning("[熔断] 主模型无回复，切换至备用模型")
 
         # Step 2: 备用模型（另一个独立子进程，完全隔离）
-        # 备用模型走独立的 DEEPSEEK_API_KEY，与主模型分开管理
+        # 密钥统一走模型池配置（LLM_POOL_API_KEY），不再读取任何云端密钥与云端端点
         logger.info("[熔断] 调用备用模型（独立进程）")
-        fallback_key = os.getenv("DEEPSEEK_API_KEY", "")
         reply = await self._call_model_script(
-            self._fallback_script, gid, max_tokens, api_key=fallback_key,
+            self._fallback_script, gid, max_tokens, target=target
         )
 
         if reply:
             is_valid, reason = self._validate_content(reply)
             if is_valid:
                 logger.info("[熔断] 备用模型回复有效")
+                self._record_bot_reply_metric(gid, reply)
                 return reply
             else:
                 logger.warning("[熔断] 备用模型内容异常 (%s)，放弃回复", reason)
@@ -919,6 +1019,28 @@ class DecisionEngine:
             logger.error("[熔断] 备用模型也无回复")
 
         return ""
+
+    # ---------- 防复读指标（只记录，不改变行为） ----------
+
+    def _record_bot_reply_metric(self, gid: str, reply: str) -> None:
+        """记录本轮回复与「本群最近 3 条自己回复」的最高相似度，并入库。
+
+        **只写日志指标、不做硬丢弃**：对明确 @bot 的场合静默不回复是更差的体验，
+        硬拦截留给后续按数据决策。指标用于量化验证"防复读提示是否真的降低了复读率"。
+        必须在读取 avoid_recent（即 _call_model_script 内）**之后**才 append，
+        否则本轮回复会被算成自己的前文。
+        """
+        recent = list(self._recent_bot_replies.get(gid, ()))
+        if recent:
+            ratio = max(
+                difflib.SequenceMatcher(None, reply, old).ratio()
+                for old in recent if old
+            ) if any(recent) else 0.0
+            logger.info("[防复读] 相似度=%.2f (最高, 与最近%d条自己回复) | 本轮: %s",
+                        ratio, len([r for r in recent if r]), reply[:60])
+        else:
+            logger.info("[防复读] 相似度=0.00 (本群尚无历史回复) | 本轮: %s", reply[:60])
+        self._recent_bot_replies[gid].append(reply)
 
     # ---------- 上下文管理 ----------
 
@@ -1107,9 +1229,45 @@ class DecisionEngine:
 
     # ---------- 回复生成（带故障转移） ----------
 
-    async def _generate_reply_async(self, gid: str) -> str:
-        """生成回复。入口统一使用故障转移版本。"""
-        return await self._generate_reply_with_failover(gid)
+    @staticmethod
+    def _build_target(message: str, user_id: str, sender_nickname: str) -> Optional[dict]:
+        """组装「本轮要回应的消息」描述，供生成链定向作答。
+
+        返回 {"nickname": str, "uid": str, "content": str}；内容为空时返回 None
+        （此时子进程沿用旧 prompt，即改动前的行为）。
+        昵称缺失时留空串——子进程只用它做提示，不参与寻址。
+
+        **CQ 码处理**：只对"送给模型看的内容"剥掉 CQ 码。原因是
+        `reverse_bot` 的空消息守卫用的是 strip **前**的字符串，所以
+        `[CQ:at,qq=BOT] `（@bot + 纯空白）与纯图片消息都会带着整条
+        `[CQ:at,…]` / `[CQ:image,…url=…]` 进来；若原样放进
+        `【你需要回应的最新消息】`，紧接着又要求"不要包含 CQ 码"，自相矛盾。
+        剥完若无实质文本（纯 @、纯图片、纯表情）→ 返回 None 回落旧 prompt，
+        即"没有可回应的文本内容"这一事实的诚实表达——**不编造**被回应的话。
+        群聊上下文里的原文不做任何删改（context 仍含 CQ 码，保持原样）。
+
+        类型守卫：message 非 str（bytes/list/dict/int…）一律返回 None，
+        避免 `.strip()` 抛 AttributeError/TypeError 打断整轮决策。
+        当前调用链恒传非 str 之外由入口保证，此处仅作防御。
+        """
+        if not isinstance(message, str):
+            return None
+        content = _CQ_CODE.sub("", message).strip()
+        if not content:
+            return None
+        return {
+            "nickname": (sender_nickname or "").strip() if isinstance(sender_nickname, str) else "",
+            "uid": str(user_id or ""),
+            "content": content,
+        }
+
+    async def _generate_reply_async(self, gid: str,
+                                    target: Optional[dict] = None) -> str:
+        """生成回复。入口统一使用故障转移版本。
+
+        target：本轮要回应的消息（dict：nickname/uid/content），无明确对象时为 None。
+        """
+        return await self._generate_reply_with_failover(gid, target=target)
 
     # ---------- 主决策方法 ----------
 
@@ -1154,7 +1312,11 @@ class DecisionEngine:
         # ===== @bot 强制回复（唯一硬规则，前置过滤之前判断） =====
         if is_at_bot:
             self._debug("决策", "@bot 强制回复")
-            reply = await self._generate_reply_async(gid)
+            # 定向回复：本轮要回应的就是这条 @bot 的消息
+            target = self._build_target(message, user_id, sender_nickname)
+            self._debug("回应目标",
+                        f"{target['nickname'] or '?'}({target['uid']})" if target else "无（回落旧 prompt）")
+            reply = await self._generate_reply_async(gid, target=target)
             if not reply:
                 self._debug("回复", "API 返回空")
                 self._debug("耗时_ms", str(int((time.time() - t_start) * 1000)))
@@ -1226,7 +1388,12 @@ class DecisionEngine:
         self._debug("最终", f"回复 (label={label}, score={score:.4f})")
 
         # ===== 生成回复 =====
-        reply = await self._generate_reply_async(gid)
+        # 定向回复：非 @ 路径同样把"刚触发了回复的这条消息"作为回应对象，
+        # 避免模型在 30~50 条上下文里自由挑话头。
+        target = self._build_target(message, user_id, sender_nickname)
+        self._debug("回应目标",
+                    f"{target['nickname'] or '?'}({target['uid']})" if target else "无（回落旧 prompt）")
+        reply = await self._generate_reply_async(gid, target=target)
         if not reply:
             self._debug("回复", "API 返回空")
             self._debug("耗时_ms", str(int((time.time() - t_start) * 1000)))
@@ -1276,9 +1443,8 @@ class DecisionEngine:
 # ---------- 命令行测试 ----------
 if __name__ == "__main__":
     async def test():
-        engine = DecisionEngine(
-            api_key=os.environ.get("DEEPSEEK_API_KEY", ""),
-        )
+        # 模型出口统一走本地网关模型池（scripts/llm_pool.py），不再需要传入云端 key
+        engine = DecisionEngine()
         gid = "test_group"
         engine.add_message(gid, "user_a", "小明", "今天天气真好啊")
         engine.add_message(gid, "user_b", "小红", "是啊适合出去玩")
