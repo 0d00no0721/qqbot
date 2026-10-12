@@ -269,16 +269,19 @@ class DecisionEngine:
     async def _get_classifier(self):
         """懒加载分类器（并发安全）"""
         if self._classifier is None:
+            if self._classifier_lock.locked():
+                return None  # 初始化繁忙时降级，不在锁前积压等待任务。
             async with self._classifier_lock:
                 if self._classifier is None:
                     # 按需导入，避免启动时加载 sentence_transformers + torch（数百 MB）
-                    self._classifier = await run_work("classifier", self._create_classifier)
+                    await run_work("classifier", self._create_classifier)
         return self._classifier
 
-    @staticmethod
-    def _create_classifier():
-        from scripts.zero_shot_classifier import ZeroShotClassifier
-        return ZeroShotClassifier()
+    def _create_classifier(self):
+        if self._classifier is None:
+            from scripts.zero_shot_classifier import ZeroShotClassifier
+            self._classifier = ZeroShotClassifier()
+        return self._classifier
 
     # ---------- 人设加载 ----------
 

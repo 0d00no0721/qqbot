@@ -167,7 +167,8 @@ async def fetch_image_async(meta: dict, timeout=None, max_bytes=DEFAULT_MAX_BYTE
     url = str((meta or {}).get("url") or "").strip()
     if not url.lower().startswith(("http://", "https://")):
         return None
-    if _to_int((meta or {}).get("file_size"), 0) > max_bytes or not take_download():
+    owner = asyncio.current_task()
+    if _to_int((meta or {}).get("file_size"), 0) > max_bytes or not take_download(owner):
         return None
     limit = timeout if timeout is not None else settings()["download_timeout_seconds"]
 
@@ -187,7 +188,7 @@ async def fetch_image_async(meta: dict, timeout=None, max_bytes=DEFAULT_MAX_BYTE
     except Exception:
         return None
     finally:
-        release_download()
+        release_download(owner)
 
 
 async def to_data_url_async(img_bytes: bytes):

@@ -88,6 +88,45 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(await engine._detect_topic_switch("g"), 0)
         get.assert_not_called()
 
+    async def test_slow_initialization_has_no_lock_wait_queue_and_is_reused_after_cancel(self):
+        engine = DecisionEngine()
+        entered, release = threading.Event(), threading.Event()
+        classifier = Mock()
+        def create():
+            entered.set()
+            release.wait(2)
+            engine._classifier = classifier
+            return classifier
+        with patch.object(engine, "_create_classifier", side_effect=create) as factory:
+            task = asyncio.create_task(engine._get_classifier())
+            try:
+                await asyncio.wait_for(asyncio.to_thread(entered.wait), 1)
+                self.assertIsNone(await engine._get_classifier())
+                task.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await task
+            finally:
+                release.set()
+            await work.close_workers()
+            self.assertIs(await engine._get_classifier(), classifier)
+            self.assertEqual(factory.call_count, 1)
+
+    async def test_slow_image_encoder_runs_off_loop(self):
+        entered, release = threading.Event(), threading.Event()
+        def encode(_):
+            entered.set()
+            release.wait(2)
+            return "encoded"
+        with patch.object(image_utils, "to_data_url", side_effect=encode):
+            task = asyncio.create_task(image_utils.to_data_url_async(b"offline"))
+            try:
+                await asyncio.wait_for(asyncio.to_thread(entered.wait), 1)
+                self.assertFalse(task.done())
+                await asyncio.wait_for(asyncio.sleep(0), 0.2)
+            finally:
+                release.set()
+            self.assertEqual(await task, "encoded")
+
     async def test_byte_helper_uses_async_image_processing(self):
         with patch.object(image_utils, "to_data_url_async", AsyncMock(return_value="data:image/jpeg;base64,eA==")) as encode, \
                 patch.object(vision, "describe", AsyncMock(return_value=(True, "测试图"))):
@@ -127,6 +166,27 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
 class DownloadTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         work.start_workers()
+
+    async def asyncTearDown(self):
+        await work.close_workers()
+
+    async def test_shutdown_cancels_download_and_closes_its_client(self):
+        entered = asyncio.Event()
+        class Stream(httpx.AsyncByteStream):
+            async def __aiter__(self):
+                entered.set()
+                await asyncio.Event().wait()
+                yield b"offline"
+        client = httpx.AsyncClient(transport=httpx.MockTransport(
+            lambda _: httpx.Response(200, stream=Stream())))
+        with patch.object(image_utils.httpx, "AsyncClient", return_value=client):
+            task = asyncio.create_task(image_utils.fetch_image_async({"url": "http://offline"}))
+            await asyncio.wait_for(entered.wait(), 1)
+            await work.close_workers()
+            self.assertTrue(task.cancelled())
+            self.assertTrue(client.is_closed)
+            self.assertEqual(work._downloads, 0)
+            self.assertFalse(work._download_tasks)
 
     async def test_slow_download_allows_other_coroutines_and_releases_on_cancel(self):
         entered, release = asyncio.Event(), asyncio.Event()

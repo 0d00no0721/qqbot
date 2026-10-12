@@ -23,3 +23,5 @@ python -c "import reverse_bot; print('Import OK')"
 使用事件屏障、模拟 HTTP 流和分类器，不下载真实模型，不访问真实 QQ 或网关。
 测试确认慢操作期间其它协程可运行、容量不会溢出、取消后保留运行名额、
 下载限长、损坏图片降级、配置缓存及资源关闭行为。
+
+文字命令另行回归：`python -m unittest scripts.test_text_command_regression -v`，使用临时签到/菜单数据，覆盖签到归属、吃啥、帮助与管理员权限。

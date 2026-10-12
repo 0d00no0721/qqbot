@@ -18,6 +18,7 @@ _signature = None
 _config = dict(DEFAULTS)
 _workers = {}
 _downloads = 0
+_download_tasks = set()
 _closing = False
 _guard = threading.RLock()
 logger = logging.getLogger("qqbot")
@@ -113,19 +114,22 @@ async def run_work(kind, fn, *args):
                             timeout=cfg["worker_timeout_seconds"])
 
 
-def take_download():
+def take_download(task=None):
     global _downloads
     with _guard:
         if _closing or _downloads >= settings()["download_concurrency"]:
             return False
         _downloads += 1
+        if task is not None:
+            _download_tasks.add(task)
         return True
 
 
-def release_download():
+def release_download(task=None):
     global _downloads
     with _guard:
         _downloads -= 1
+        _download_tasks.discard(task)
 
 
 def start_workers():
@@ -139,4 +143,8 @@ async def close_workers():
         _closing = True
         workers = list(_workers.values())
         _workers.clear()
+        downloads = [task for task in _download_tasks if task is not asyncio.current_task()]
+    for task in downloads:
+        task.cancel()
+    await asyncio.gather(*downloads, return_exceptions=True)
     await asyncio.gather(*(worker.close() for worker in workers))
