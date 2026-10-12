@@ -22,3 +22,5 @@ python -c "import reverse_bot; print('Import OK')"
 测试使用模拟 HTTP 响应和独立脚本空输入，不访问真实网关；覆盖 9 次上限、
 后续共享冷却、立即停止鉴权错误、业务校验继续、取消传播和 JSON 入口。
 基线与回归请求次数可以比较；模拟耗时不代表真实模型性能。
+
+文字命令另行回归：`python -m unittest scripts.test_text_command_regression -v`，使用临时签到/菜单数据，覆盖签到归属、吃啥、帮助与管理员权限。
