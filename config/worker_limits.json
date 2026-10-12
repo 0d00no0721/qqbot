@@ -1,0 +1,8 @@
+{
+  "classifier_pending": 4,
+  "image_workers": 2,
+  "image_pending": 2,
+  "download_concurrency": 2,
+  "download_timeout_seconds": 10,
+  "worker_timeout_seconds": 30
+}

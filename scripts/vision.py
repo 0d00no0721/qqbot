@@ -110,11 +110,11 @@ async def describe(data_url: str, hint: str = "") -> tuple[bool, str]:
 async def describe_image_bytes(img_bytes: bytes, hint: str = "") -> tuple[bool, str]:
     """便捷函数：原始字节 → data URL → describe（压缩失败即 (False, "")）。"""
     try:
-        from scripts.image_utils import to_data_url
+        from scripts.image_utils import to_data_url_async
     except ImportError:  # pragma: no cover
-        from image_utils import to_data_url  # type: ignore
+        from image_utils import to_data_url_async  # type: ignore
 
-    data_url: Optional[str] = to_data_url(img_bytes)
+    data_url: Optional[str] = await to_data_url_async(img_bytes)
     if not data_url:
         return False, ""
     return await describe(data_url, hint)

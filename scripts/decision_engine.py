@@ -26,6 +26,7 @@ from collections import defaultdict, deque
 from typing import Dict, Optional, Tuple
 
 from sklearn.metrics.pairwise import cosine_similarity
+from scripts.async_work import run_work
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -271,9 +272,13 @@ class DecisionEngine:
             async with self._classifier_lock:
                 if self._classifier is None:
                     # 按需导入，避免启动时加载 sentence_transformers + torch（数百 MB）
-                    from scripts.zero_shot_classifier import ZeroShotClassifier
-                    self._classifier = ZeroShotClassifier()
+                    self._classifier = await run_work("classifier", self._create_classifier)
         return self._classifier
+
+    @staticmethod
+    def _create_classifier():
+        from scripts.zero_shot_classifier import ZeroShotClassifier
+        return ZeroShotClassifier()
 
     # ---------- 人设加载 ----------
 
@@ -1064,10 +1069,6 @@ class DecisionEngine:
         返回:
             int: 应保留的消息条数（从最新往前数）。0 表示无切换。
         """
-        classifier = await self._get_classifier()
-        if classifier is None:
-            return 0
-
         cfg = self.config
         scan_n = cfg.get("topic_scan_window", 5)
         recent_n = cfg.get("topic_recent_window", 8)
@@ -1086,11 +1087,15 @@ class DecisionEngine:
         if total < recent_n + scan_n:
             return 0
 
+        classifier = await self._get_classifier()
+        if classifier is None:
+            return 0
+
         # 提取最近窗口文本
         recent_texts = [m["content"] for m in all_msgs[-recent_n:]]
 
         try:
-            recent_embs = classifier.encode_batch(recent_texts)
+            recent_embs = await run_work("classifier", classifier.encode_batch, recent_texts)
             if len(recent_embs) == 0:
                 return 0
             # 最近窗口的质心向量
@@ -1111,7 +1116,7 @@ class DecisionEngine:
             if len(window_texts) < 2:  # 窗口太小，跳过
                 continue
             try:
-                window_embs = classifier.encode_batch(window_texts)
+                window_embs = await run_work("classifier", classifier.encode_batch, window_texts)
                 if len(window_embs) == 0:
                     continue
                 window_centroid = window_embs.mean(axis=0, keepdims=True)
@@ -1198,7 +1203,8 @@ class DecisionEngine:
     async def _classify_needs_reply(self, text: str) -> Tuple[str, float]:
         classifier = await self._get_classifier()
         try:
-            label, score = classifier.classify(text, NEEDS_REPLY_LABELS)
+            result = await run_work("classifier", classifier.classify, text, NEEDS_REPLY_LABELS)
+            label, score = result if result is not None else ("不需要回复", 0.0)
             return label, score
         except Exception as e:
             print(f"[决策引擎] 分类器调用失败: {e}", file=sys.stderr)

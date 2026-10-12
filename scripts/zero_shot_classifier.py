@@ -78,6 +78,7 @@ class ZeroShotClassifier:
         self._model = None
         self._load_failed = False
         self._load_time = None
+        self._label_cache = {}
 
         # 如果类级别已有加载好的模型，直接引用
         if self.__class__._shared_model is not None:
@@ -176,7 +177,7 @@ class ZeroShotClassifier:
 
         t0 = time.time()
         text_emb = self._model.encode([text], convert_to_numpy=True)
-        label_emb = self._model.encode(labels, convert_to_numpy=True)
+        label_emb = self._encode_labels(labels)
         sims = cosine_similarity(text_emb, label_emb)[0]
 
         best_idx = int(np.argmax(sims))
@@ -200,12 +201,20 @@ class ZeroShotClassifier:
 
         t0 = time.time()
         text_emb = self._model.encode([text], convert_to_numpy=True)
-        label_emb = self._model.encode(labels, convert_to_numpy=True)
+        label_emb = self._encode_labels(labels)
         sims = cosine_similarity(text_emb, label_emb)[0]
         self._last_inference_ms = round((time.time() - t0) * 1000, 1)
 
         indices = np.argsort(sims)[::-1]
         return [(labels[i], float(sims[i])) for i in indices]
+
+    def _encode_labels(self, labels):
+        key = (id(self._model), tuple(labels))
+        if key not in self._label_cache:
+            if len(self._label_cache) >= 16:
+                self._label_cache.pop(next(iter(self._label_cache)))
+            self._label_cache[key] = self._model.encode(labels, convert_to_numpy=True)
+        return self._label_cache[key]
 
     def encode_batch(self, texts: list):
         """批量编码文本列表，返回 numpy 嵌入矩阵 (N, dim)。模型未加载时返回空数组。"""

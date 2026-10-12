@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import base64
+import asyncio
 import html
 import io
 import re
@@ -158,6 +159,40 @@ def fetch_image(
         return None
 
     return bytes(buf) if buf else None
+
+
+async def fetch_image_async(meta: dict, timeout=None, max_bytes=DEFAULT_MAX_BYTES):
+    """异步下载，流式限制大小；无可用下载槽时立即降级。"""
+    from scripts.async_work import settings, take_download, release_download
+    url = str((meta or {}).get("url") or "").strip()
+    if not url.lower().startswith(("http://", "https://")):
+        return None
+    if _to_int((meta or {}).get("file_size"), 0) > max_bytes or not take_download():
+        return None
+    limit = timeout if timeout is not None else settings()["download_timeout_seconds"]
+
+    async def download():
+        async with httpx.AsyncClient(trust_env=False, timeout=limit, follow_redirects=True) as client:
+            async with client.stream("GET", url) as resp:
+                if resp.status_code != 200:
+                    return None
+                buf = bytearray()
+                async for chunk in resp.aiter_bytes(chunk_size=65536):
+                    if len(buf) + len(chunk) > max_bytes:
+                        return None
+                    buf.extend(chunk)
+                return bytes(buf) or None
+    try:
+        return await asyncio.wait_for(download(), limit)
+    except Exception:
+        return None
+    finally:
+        release_download()
+
+
+async def to_data_url_async(img_bytes: bytes):
+    from scripts.async_work import run_work
+    return await run_work("image", to_data_url, img_bytes)
 
 
 def to_data_url(

@@ -286,11 +286,11 @@ async def _describe_triggered_image(gid_str: str, message_images: list, raw_mess
             bot_logger.info(f"[识图] 跳过（同图去重：{tag}）")
             continue
         # 闸门 3：直链可能已过期（rkey 时效）→ fetch_image 返回 None，静默降级
-        img_bytes = image_utils.fetch_image(meta)
+        img_bytes = await image_utils.fetch_image_async(meta)
         if not img_bytes:
             bot_logger.info(f"[识图] 跳过（下载失败/直链过期：{tag}）")
             continue
-        data_url = image_utils.to_data_url(img_bytes)
+        data_url = await image_utils.to_data_url_async(img_bytes)
         if not data_url:
             bot_logger.info(f"[识图] 跳过（图片解码失败：{tag}）")
             continue
@@ -616,6 +616,8 @@ async def handler(websocket, *args):
 
 
 async def main():
+    from scripts.async_work import start_workers
+    start_workers()
     # 初始化命令处理器外部引用
     init_handlers(bot_logger, decision_engine, send_message, send_group_image, send_group_file)
 
@@ -650,6 +652,8 @@ async def main():
         for task in background_tasks:
             task.cancel()
         await asyncio.gather(*background_tasks, return_exceptions=True)
+        from scripts.async_work import close_workers
+        await close_workers()
         bot_logger.info("服务已停止。")
 
 
