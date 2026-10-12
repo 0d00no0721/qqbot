@@ -57,6 +57,10 @@ qq_native_re/**/replay_results*.json
 qq_native_re/**/context_data.json
 qq_native_re/**/_drill_*_model_pool.json
 qq_native_re/**/_tmp/
+qq_native_re/**/_*.json
+qq_native_re/**/code_hashes.json
+qq_native_re/**/*_results*.json
+qq_native_re/**/*_results*.txt
 
 # ---------- 逆向工程材料：不进公开仓库（第三方二进制 + 注入分析 + 绕过实验）----------
 qq_native_re/samples/
