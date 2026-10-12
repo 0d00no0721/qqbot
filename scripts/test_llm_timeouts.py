@@ -94,6 +94,10 @@ class PoolTimeoutTests(unittest.IsolatedAsyncioTestCase):
                 pass
             finally:
                 writer.close()
+                try:
+                    await writer.wait_closed()
+                except ConnectionError:
+                    pass
                 connections.discard(asyncio.current_task())
         server = await asyncio.start_server(serve, "127.0.0.1", 0)
         self.cfg["base_url"] = f"http://127.0.0.1:{server.sockets[0].getsockname()[1]}"
@@ -176,10 +180,11 @@ class ProcessTests(unittest.IsolatedAsyncioTestCase):
     async def test_engine_cancel_never_calls_fallback(self):
         from scripts.decision_engine import DecisionEngine
         engine = DecisionEngine()
-        with patch.object(engine, "_call_model_script", AsyncMock(side_effect=asyncio.CancelledError)) as call:
+        with patch.object(engine, "_call_model_script", AsyncMock(side_effect=asyncio.CancelledError)) as call, \
+                patch("scripts.decision_engine.chat", AsyncMock(side_effect=asyncio.CancelledError)) as direct:
             with self.assertRaises(asyncio.CancelledError):
                 await engine._generate_reply_with_failover("offline")
-        self.assertEqual(call.await_count, 1)
+        self.assertEqual(call.await_count + direct.await_count, 1)
 
 
 if __name__ == "__main__":

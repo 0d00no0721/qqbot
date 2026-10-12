@@ -19,3 +19,5 @@ python -c "import reverse_bot; print('Import OK')"
 测试仅访问本地 HTTP 桩并启动测试用 Python 子进程，无真实模型或 QQ 请求。
 覆盖慢分块、整轮预算、单次失败后降档、外部取消、创建中取消和实际进程回收。
 `[模型耗时]` 日志记录整轮耗时、尝试次数和结束原因，原逐次审计字段不变。
+
+文字命令另行回归：`python -m unittest scripts.test_text_command_regression -v`，使用临时签到/菜单数据，覆盖签到归属、吃啥、帮助与管理员权限。
