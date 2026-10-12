@@ -1,0 +1,48 @@
+========================================================================
+中央模型池演练 scripts/test_llm_pool.py
+========================================================================
+环境: LLM_POOL_DISABLE = None
+配置: config/model_pool.json -> E:\QQbot\config\model_pool.json
+审计: 首选 E:\QQbot\logs\llm_pool.jsonl -> 实际 E:\QQbot\qq_native_re\findings\model_pool\llm_pool.jsonl
+
+=== A 正常调用 ===
+  池内模型（优先级序）: ['deepseek-flash', 'deepseek-flash-2', 'deepseek-v4-flash-ascend', 'deepseek-v4-flash-ascend1', 'qwen3.8-flash-next-2', 'qwen3.8-flash-next', 'glm-5.3-flash', 'qwen3.8-reasoner']
+  base_url: http://127.0.0.1:8090/v1
+  实际服务模型: deepseek-flash
+  回复内容: '正常'  (耗时 0.78s)
+  [PASS] 实际服务模型落在 T1（['deepseek-flash', 'deepseek-flash-2']）: deepseek-flash
+  [PASS] 拿到了非空回复
+
+=== B 强制降档（首档指向不存在的模型） ===
+  临时首档: ['no-such-model-xyz']，其余档不变
+  临时池内模型: ['no-such-model-xyz', 'deepseek-v4-flash-ascend', 'deepseek-v4-flash-ascend1', 'qwen3.8-flash-next-2', 'qwen3.8-flash-next', 'glm-5.3-flash', 'qwen3.8-reasoner']
+  实际服务模型: deepseek-v4-flash-ascend
+  回复内容: '正常'  (耗时 1.14s)
+  [PASS] 没有落在那个不存在的模型上
+  [PASS] 实际服务模型落在 T2 及以后: deepseek-v4-flash-ascend
+  [PASS] 降档后依然拿到了非空回复
+  冷却快照: {'no-such-model-xyz': 599.3}
+
+=== C 全挂（所有档都不存在） ===
+  临时档位: [['no-such-model-xyz'], ['no-such-model-abc'], ['no-such-model-123']]
+  [PASS] 抛出了 LLMPoolExhausted
+  异常类型: LLMPoolExhausted
+  异常消息: 模型池已耗尽（尝试 3 项，耗时 0.4s）。失败明细：no-such-model-xyz: HTTP 404/model_not_found: 没有 Key 支持模型 no-such-model-xyz [模型不存在/不支持，长冷却 600s]; no-such-model-abc: HTTP 404/model_not_found: 没有 Key 支持模型 no-such-model-abc [模型不存在/不支持，长冷却 600s]; no-such-model-123: HTTP 404/model_not_found: 没有 Key 支持模型 no-such-model-123 [模型不存在/不支持，长冷却 600s]
+  [PASS] 消息里能看到每个模型的失败原因
+  冷却快照: {'no-such-model-xyz': 600.0, 'no-such-model-abc': 600.0, 'no-such-model-123': 600.0}
+  耗时 0.43s
+
+=== D 审计（llm_pool.jsonl 最后 5 行） ===
+  首选位置: E:\QQbot\logs\llm_pool.jsonl
+  实际写入: E:\QQbot\qq_native_re\findings\model_pool\llm_pool.jsonl
+  文件大小: 31697 bytes, 总行数: 115
+   2026-10-12T08:05:46+08:00 | label=drill-B | tier=1 | model=no-such-model-xyz | ok=False | 21ms | tokens=None | err=HTTP 404/model_not_found: 没有 Key 支持模型 no-such-model-xyz [模型不存在/不支持，长冷却 600s]
+   2026-10-12T08:05:47+08:00 | label=drill-B | tier=2 | model=deepseek-v4-flash-ascend | ok=True | 710ms | tokens=11 | err=None
+   2026-10-12T08:05:47+08:00 | label=drill-C | tier=1 | model=no-such-model-xyz | ok=False | 15ms | tokens=None | err=HTTP 404/model_not_found: 没有 Key 支持模型 no-such-model-xyz [模型不存在/不支持，长冷却 600s]
+   2026-10-12T08:05:47+08:00 | label=drill-C | tier=2 | model=no-such-model-abc | ok=False | 20ms | tokens=None | err=HTTP 404/model_not_found: 没有 Key 支持模型 no-such-model-abc [模型不存在/不支持，长冷却 600s]
+   2026-10-12T08:05:47+08:00 | label=drill-C | tier=3 | model=no-such-model-123 | ok=False | 14ms | tokens=None | err=HTTP 404/model_not_found: 没有 Key 支持模型 no-such-model-123 [模型不存在/不支持，长冷却 600s]
+  [PASS] 审计日志里有记录
+
+========================================================================
+结果: 全部通过
+========================================================================

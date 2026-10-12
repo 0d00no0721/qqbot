@@ -1,0 +1,24 @@
+审计总行数 136；err 里含 "key"/attempts 的行数: 13
+    2026-10-12T07:49:41+08:00 drill-B no-such-model-xyz errlen= 231
+    2026-10-12T07:49:42+08:00 drill-C no-such-model-xyz errlen= 231
+    2026-10-12T07:49:42+08:00 drill-C no-such-model-abc errlen= 231
+    2026-10-12T07:49:42+08:00 drill-C no-such-model-123 errlen= 231
+    2026-10-12T07:49:52+08:00 drill-disable deepseek-v4-pro errlen= 210
+最早 3 行:
+    2026-10-12T07:49:19+08:00 drill-A deepseek-flash | None
+    2026-10-12T07:49:29+08:00 drill-A deepseek-flash | None
+    2026-10-12T07:49:41+08:00 drill-A deepseek-flash | None
+
+实测 404 body 体量 / 新旧 err 长度对比:
+  does-not-exist-xyz: HTTP 404 body=93字符 -> 新 err=56字符 | 旧式 err=124字符 旧式含上游key名=True
+     新: HTTP 404/model_not_found: 没有 Key 支持模型 does-not-exist-xyz
+     旧（已脱敏）: HTTP 404 (模型不存在/不支持，长冷却 600s): {"error":{"message":"没有 Key 支持模型 does-not-exist-xyz","type":"model_not_found","attempts":[]}}
+  deepseek-v4-pro: HTTP 404 body=90字符 -> 新 err=53字符 | 旧式 err=121字符 旧式含上游key名=True
+     新: HTTP 404/model_not_found: 没有 Key 支持模型 deepseek-v4-pro
+     旧（已脱敏）: HTTP 404 (模型不存在/不支持，长冷却 600s): {"error":{"message":"没有 Key 支持模型 deepseek-v4-pro","type":"model_not_found","attempts":[]}}
+  no-such-model-xyz: HTTP 404 body=92字符 -> 新 err=55字符 | 旧式 err=123字符 旧式含上游key名=True
+     新: HTTP 404/model_not_found: 没有 Key 支持模型 no-such-model-xyz
+     旧（已脱敏）: HTTP 404 (模型不存在/不支持，长冷却 600s): {"error":{"message":"没有 Key 支持模型 no-such-model-xyz","type":"model_not_found","attempts":[]}}
+  qwen-reasoner-typo: HTTP 404 body=368字符 -> 新 err=56字符 | 旧式 err=231字符 旧式含上游key名=True
+     新: HTTP 404/model_not_found: 没有 Key 支持模型 qwen-reasoner-typo
+     旧（已脱敏）: HTTP 404 (模型不存在/不支持，长冷却 600s): {"error":{"message":"没有 Key 支持模型 qwen-reasoner-typo","type":"model_not_found","attempts":[{"key":"<上游key-N>","kind":"capability","code":403,"message":"key not allowed to

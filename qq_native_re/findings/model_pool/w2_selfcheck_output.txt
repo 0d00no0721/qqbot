@@ -1,0 +1,19 @@
+
+PROJECT_ROOT = E:\QQbot
+[0] asyncio.create_subprocess_exec 探针 -> 沙箱拒绝 PermissionError: [WinError 5] 拒绝访问。
+[0] 写探针 logs/_w2_probe.tmp -> 沙箱拒绝 PermissionError: [Errno 13] Permission denied: 'logs/_w2_probe.tmp'
+[0] 写探针 config/_w2_probe.tmp -> 沙箱拒绝 PermissionError: [Errno 13] Permission denied: 'config/_w2_probe.tmp'
+[0] 写探针 qq_native_re/findings/model_pool/_w2_probe.tmp -> OK
+[1] import reverse_bot: OK
+[2] AVAILABLE_MODELS = ['deepseek-flash', 'deepseek-flash-2', 'deepseek-v4-flash-ascend', 'deepseek-v4-flash-ascend1', 'qwen3.8-flash-next-2', 'qwen3.8-flash-next', 'glm-5.3-flash', 'qwen3.8-reasoner']
+[2] get_active_model = {'model': 'deepseek-flash', 'api_base_url': 'http://127.0.0.1:8090/v1', 'api_key': 'sk-personal-****'}
+[2] set_active_model('deepseek-v4-pro') -> (False, "模型 'deepseek-v4-pro' 不可用")
+[2] set_active_model('deepseek-flash') -> (False, "写入配置失败: [Errno 13] Permission denied: 'E:\\\\QQbot\\\\config\\\\active_model.json'")
+[3] _call_model_script(model_primary)  -> '这么好的天气，倒是很适合在阳台泡一壶红茶呢。大家有什么想去的地方吗？'
+[3] _call_model_script(model_fallback) -> '天气好的时候确实会想出去走走呢。不过要注意防晒，傍晚的紫外线比想象的强哦。'
+[3] _generate_reply_with_failover -> '这种天气坐在窗边喝红茶最舒服了呢…不过大家要出去玩的话，记得做好防晒哦。'
+[3b] 主脚本失效时 _generate_reply_with_failover -> '天气好的时候很适合在阳台上喝红茶呢…不过今天还得练贝斯，只能隔着窗户看看了。'
+[3] 三次调用全部拿到非空回复: True
+[4] stdin JSON: {"context": "[小明]: 今天天气真好啊\n[小红]: 是啊适合出去玩", "persona": "## 核心身份\n你是长崎素世，16岁，月之森女子学园高中一年级学生，MyGO!!...", "max_tokens": 50, "model": "deepseek-flash", "preferred_model": "deepseek-flash", "api_base_url": "http://127.0.0.1:8090/v1", "api_key": "sk-personal-****"}
+SELFCHECK DONE
+

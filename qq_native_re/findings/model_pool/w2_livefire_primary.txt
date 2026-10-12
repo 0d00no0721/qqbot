@@ -1,0 +1,2 @@
+{"reply": "适合出去走走"}
+[model_primary] 调用成功: 命中模型=deepseek-flash

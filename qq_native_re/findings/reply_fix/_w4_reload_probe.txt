@@ -1,0 +1,23 @@
+[警告] 无法写入文件日志 logs\bot.2026-10-12.log（权限不足），已降级为仅控制台日志
+==============================================================================
+缓存语义探针（临时副本，真实 config/decision_rules.json 只读）
+==============================================================================
+  改前副本: qq_native_re\patches\keyword_narrow_backup_20261012-123840\decision_rules.json
+  改后文件: config/decision_rules.json
+  临时配置: qq_native_re\findings\reply_fix\_w4_reload_probe_cfg.json（用完删除）
+
+  1) 启动时载入改前配置 → 实例 e1 已把 error_keywords 快照进内存
+     e1._validate_content('terror') = (False, "命中错误话术关键词 'error'")   命中='error'
+  [PASS] e1（改前配置）中 'terror' 命中 'error'
+
+  2) 运行中把盘上文件换成改后配置，**同一实例**再判一次：
+     e1._validate_content('terror') = (False, "命中错误话术关键词 'error'")   e1 内存清单条数=20
+  [PASS] 同一实例仍按旧清单判定（'terror' 仍命中）→ 无热加载
+
+  3) 用同一份（已更新的）文件**新建**实例 e2：
+     e2._validate_content('terror') = (True, None)   e2 内存清单条数=22
+  [PASS] 新实例按新清单判定（'terror' 放行）→ 重启即生效
+
+==============================================================================
+总体: ALL PASS
+结论: decision_rules.json 为**启动时缓存**（DecisionEngine.__init__ 一次），改动需重启进程生效。
