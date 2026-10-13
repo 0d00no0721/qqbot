@@ -1,0 +1,15 @@
+{
+  "enabled": true,
+  "tiers": {"t0": true, "t1": true, "t2": true},
+  "rate_limit_per_hour": 10,
+  "max_results": 5,
+  "timeout_seconds": 15,
+  "router_max_tokens": 24,
+  "router_timeout_seconds": 8,
+  "interim_notice": false,
+  "base_url": "",
+  "fetch_pages": 3,
+  "page_max_chars": 3000,
+  "page_timeout_seconds": 8,
+  "quality_retry_min_relevance": 0.34
+}
