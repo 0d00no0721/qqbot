@@ -79,3 +79,16 @@ python -c "import reverse_bot; print('Import OK')"
 
 独立分支的依赖组合测试会明确跳过，须在叠加 #2、#3 后全量执行，不把跳过算作通过。
 额外组合验收包含 #1 互动菜单和 #6 画像批次修复，排除 #4；手机/电脑 QQ 和真实网关负载仍待人工验收。
+
+本轮结果（Python 3.10，项目 venv、UTF-8）：独立分支 26 项通过、6 项明确跳过依赖组合场景；
+#1 + #2 + #3 + #5 + #6 组合 **108 项通过，0 跳过**，两处导入自检通过。
+组合时保留模型池外层准入、内层生成超时，并同时保留菜单回执路由、队列断线清理与异步执行器关闭；
+菜单原测试中无群号/发送者的模拟消息补齐这些字段，以符合 #5 的入口校验，未改菜单业务逻辑。
+组合测试命令：
+
+```powershell
+python -m unittest scripts.test_message_queue scripts.test_queue_resources scripts.test_llm_timeouts scripts.test_async_message_work scripts.test_text_command_regression scripts.test_interaction_menu scripts.test_profile_batches -v
+```
+
+额外核对上游 main：内容校验、前置过滤、明确提问去重、主备链函数体 AST 相同；
+两个独立模型脚本、模型配置和决策规则未改。离线耗时不作为真实网关性能数据。
