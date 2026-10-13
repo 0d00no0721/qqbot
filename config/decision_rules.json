@@ -20,7 +20,7 @@
     "retry_interval_seconds": 1800,
     "content_checks": {
       "min_length": 3,
-      "max_length": 500,
+      "max_length": 5000,
       "gibberish_max_ratio": 0.6,
       "error_keywords": [
         "an error occurred", "error occurred", "traceback (most recent call last)",

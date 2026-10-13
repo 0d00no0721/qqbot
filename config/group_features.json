@@ -7,17 +7,20 @@
       "commands": true,
       "newcomer_welcome": true,
       "profile_record": true,
-      "vision": true
+      "vision": true,
+      "search": true
     }
   },
   "1055881417": {
-    "group_name": "",
+    "group_name": "碧油鸡乐土(二阶英灵殿）",
     "features": {
-      "decision_engine": false,
-      "plus_one": false,
-      "commands": false,
-      "newcomer_welcome": false,
-      "profile_record": false
+      "decision_engine": true,
+      "plus_one": true,
+      "commands": true,
+      "newcomer_welcome": true,
+      "profile_record": true,
+      "vision": true,
+      "search": true
     }
   }
 }
