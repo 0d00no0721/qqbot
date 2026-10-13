@@ -28,3 +28,6 @@ python -c "import reverse_bot; print('Import OK')"
 `[模型耗时]` 日志记录整轮耗时、尝试次数和结束原因，原逐次审计字段不变。
 
 文字命令另行回归：`python -m unittest scripts.test_text_command_regression -v`，使用临时签到/菜单数据，覆盖签到归属、吃啥、帮助与管理员权限。
+
+本轮取消交接修复：专项加文字命令 **13 项通过**，项目虚拟环境 UTF-8 导入自检通过。
+另与 #1、#3、#5、#6 组合回归 **108 项通过**（排除已撤回 #4）。
