@@ -6,7 +6,7 @@ import json
 import sys
 import time
 import unittest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
 
@@ -185,6 +185,53 @@ class ProcessTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(asyncio.CancelledError):
                 await engine._generate_reply_with_failover("offline")
         self.assertEqual(call.await_count + direct.await_count, 1)
+
+    async def test_cancel_at_creation_or_communication_completion_is_not_swallowed(self):
+        for phase in ("creating", "communicating"):
+            with self.subTest(phase=phase):
+                entered = asyncio.Event()
+                observed = []
+
+                class Child:
+                    returncode = None
+                    def kill(self):
+                        self.returncode = -1
+                    async def communicate(self, input=None):
+                        if phase == "communicating":
+                            entered.set()  # 取消与 communicate 结果完成处于同一轮事件循环
+                        self.returncode = 0
+                        return b"OK", b""
+                    async def wait(self):
+                        return self.returncode
+
+                async def create(*_, **__):
+                    if phase == "creating":
+                        entered.set()
+                    return Child()
+
+                token = process_guard.cleanup_observer.set(observed.append)
+                try:
+                    with patch.object(asyncio, "create_subprocess_exec", side_effect=create):
+                        task = asyncio.create_task(process_guard.run_process("offline", timeout=1))
+                        await entered.wait()
+                        task.cancel()
+                        with self.assertRaises(asyncio.CancelledError):
+                            await asyncio.wait_for(task, 0.5)
+                    self.assertEqual(len(observed), 1)
+                    self.assertTrue(observed[0].done())
+                finally:
+                    process_guard.cleanup_observer.reset(token)
+
+    async def test_cleanup_observer_failure_does_not_interrupt_reaping(self):
+        token = process_guard.cleanup_observer.set(Mock(side_effect=ValueError("offline")))
+        try:
+            with patch.object(asyncio, "create_subprocess_exec", side_effect=self.capture):
+                with self.assertRaises(asyncio.TimeoutError):
+                    await process_guard.run_process(sys.executable, "-c", "import time;time.sleep(10)",
+                                                    timeout=0.2, cleanup_seconds=0.1)
+            self.assertIsNotNone(self.children[0].returncode)
+        finally:
+            process_guard.cleanup_observer.reset(token)
 
 
 if __name__ == "__main__":

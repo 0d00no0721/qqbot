@@ -8,6 +8,13 @@
 操作系统尚未返回进程句柄时保留一次回收回调，创建完成即终止，不发起重试。
 外部取消不会设置故障冷却或触发备用模型。
 
+组合验收补充：Python 3.10 的 `wait_for(shield(task))` 在任务完成与取消同时到达时可能吞掉取消。
+进程创建、通信和回收阶段改用不吞取消的截止时间等待，原有 60 秒/2 秒配置不变。
+`cleanup_observer` 只在发生回收时通知调用方一次，供 #5 保留仍被实际子进程占用的名额；
+本 PR 独立可用，未设置观察者时行为不变。观察者异常也不影响进程回收。
+最小复现：`python -m unittest scripts.test_llm_timeouts.ProcessTests.test_cancel_at_creation_or_communication_completion_is_not_swallowed -v`。
+修复前取消可能变成正常返回，聊天继续调用备用脚本；修复后始终传播 `CancelledError` 并完成回收。
+
 离线复现与回归（项目虚拟环境，UTF-8）：
 
 ```powershell

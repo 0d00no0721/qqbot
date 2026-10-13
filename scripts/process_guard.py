@@ -2,11 +2,23 @@
 """独立模型脚本的有界执行与回收，仅在调用时创建任务。"""
 
 import asyncio
+import contextvars
 import logging
 import time
 
 
 _reaping = set()
+# 可选的调用方资源归属通知；不等待、不创建额外任务。
+cleanup_observer = contextvars.ContextVar("model_process_cleanup_observer", default=None)
+
+
+async def _wait_until(task, deadline):
+    # Python 3.10 的 wait_for 在 future 完成与外部取消同时到达时可能吞掉取消。
+    # wait 不取消底层任务，取消总会传播；底层进程统一由下方 reap 负责。
+    done, _ = await asyncio.wait({task}, timeout=max(0, deadline - time.monotonic()))
+    if not done:
+        raise asyncio.TimeoutError
+    return task.result()
 
 
 async def run_process(*args, input=b"", timeout=60.0, cleanup_seconds=2.0):
@@ -45,15 +57,19 @@ async def run_process(*args, input=b"", timeout=60.0, cleanup_seconds=2.0):
         await child.wait()
 
     try:
-        proc = await asyncio.wait_for(asyncio.shield(creating),
-                                      max(0, work_deadline - time.monotonic()))
+        proc = await _wait_until(creating, work_deadline)
         communication = asyncio.create_task(proc.communicate(input=input))
-        stdout, stderr = await asyncio.wait_for(asyncio.shield(communication),
-                                                max(0, work_deadline - time.monotonic()))
+        stdout, stderr = await _wait_until(communication, work_deadline)
         return proc.returncode, stdout, stderr
     except BaseException:
         cleaning = asyncio.create_task(reap())
         _reaping.add(cleaning)
+        observer = cleanup_observer.get()
+        if observer is not None:
+            try:
+                observer(cleaning)
+            except Exception:
+                logging.getLogger("qqbot").warning("[模型进程] 回收通知失败，继续回收进程")
 
         def finished(task):
             _reaping.discard(task)
@@ -62,7 +78,7 @@ async def run_process(*args, input=b"", timeout=60.0, cleanup_seconds=2.0):
 
         cleaning.add_done_callback(finished)
         try:
-            await asyncio.wait_for(asyncio.shield(cleaning), max(0, deadline - time.monotonic()))
+            await _wait_until(cleaning, deadline)
         except (asyncio.TimeoutError, asyncio.CancelledError):
             logging.getLogger("qqbot").warning("[模型进程] 创建/回收尚未结束，保留退出回调")
         raise
