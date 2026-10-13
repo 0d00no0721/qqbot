@@ -41,6 +41,24 @@ W4b 改法：删除计数推断，改为**显式语义契约**——
 原有熔断 / e2e / 保真度 / 配置健壮性断言（25 条）**一条未删、逐字保留**；
 另加 2 条只读完整性断言（config/decision_rules.json 与 scripts/decision_engine.py
 在本轮运行前后字节不变）。
+
+--- V1r 刷新说明（2026-10-13）-------------------------------------------------
+W5 把 `failover.content_checks.max_length` **由 500 放宽到 5000**
+（2026-10-12，见 qq_native_re/findings/reply_fix/W5_maxlen_5000.md），
+但本套件"边界"组当时把预期写死成"600 字必须判无效" → 600 字现在**合法**
+→ 恒报 1 项 FAIL（**过期预期，不是代码回归**）。
+
+V1r 改法（只改测试，不动任何运行时文件）：把"过短/过长"边界改为
+**按当前配置动态取值**——
+  · `min_length - 1` 字 → 必须判无效（理由含"内容过短"）
+  · `min_length`   字 → 必须判有效
+  · `max_length - 1` 字 → 必须判有效
+  · `max_length + 1` 字 → 必须判无效（理由含"内容过长"）
+判定文案也按 `min_length/max_length` **现读值**拼写断言（不再写死 500）。
+其余边界（空串/纯空白/换行制表/纯 emoji/乱码/敏感词）与应拦 24 / 应放行 14
+分组**逐条未动**。
+`--sabotage` 相应扩成双向反向证明：内存里把 `max_length` 调小(10) / 调大(10**6)
+必须各自让边界用例翻红，否则本套件在长度语义上就是"瞎的"。
 """
 import copy
 import hashlib
@@ -136,7 +154,8 @@ RESULTS["error_keywords"] = _KWS
 # 构造用例矩阵
 # --------------------------------------------------------------------------
 CN_FILLER = "今天天气不错，要不要一起出去走走？"
-LONG_600 = "今天天气不错呀，" * 75  # 600 字，用于"过长"
+# 注：写死字数的 LONG_600 已由 V1r 删除 —— 长度边界改为按当前配置动态取值
+#（max_length 曾于 2026-10-12 由 500 放宽到 5000，见 W5_maxlen_5000.md）
 
 BLOCK = "拦截"   # 应拦截：报错话术必须判无效
 ALLOW = "放行"   # 应放行：正常回复 / 收窄后不再误伤的用例必须判有效
@@ -154,6 +173,38 @@ def gibberish():
 
 def sensitive_hit():
     return f"我来说说{_SENSITIVE_KEYWORDS[0]}的事情"
+
+
+def pad_to(n):
+    """造一条**恰好 n 字**的自然语言文本（无敏感词/无错误话术/非乱码）。
+
+    `_validate_content` 的判定顺序是 过短 → 过长 → 乱码 → 错误话术，
+    故长度边界用例不会掉进乱码/关键词分支。
+    """
+    return (CN_FILLER * (n // len(CN_FILLER) + 1))[:n]
+
+
+# --- V1r：长度边界的阈值现读自 config/decision_rules.json（缺省沿用引擎兜底值） ---
+def _read_max_length():
+    p = os.path.join(ROOT, "config", "decision_rules.json")
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+        v = cfg.get("failover", {}).get("content_checks", {}).get("max_length")
+        return int(v)
+    except Exception:
+        # 读不到就退回引擎启动时快照的值（引擎兜底 500），保证套件不因 IO 失败而"跳过边界"
+        return int(_eng._content_checks.get("max_length", 500))
+
+
+MAX_LEN = _read_max_length()
+MIN_LEN = int(_eng._content_checks.get("min_length", 3))
+
+LONG_BOUND_NAME = f"边界: 过长({MAX_LEN - 1}字, max={MAX_LEN}-1) 应有效"
+LONG_OVER_NAME = f"边界: 过长({MAX_LEN + 1}字, max={MAX_LEN}) 应无效"
+SHORT_UNDER_NAME = f"边界: 过短({MIN_LEN - 1}字, min={MIN_LEN})"
+SHORT_AT_NAME = f"边界: 恰好({MIN_LEN}字, min={MIN_LEN}) 应有效"
+DYN_EDGE_NAMES = (SHORT_UNDER_NAME, SHORT_AT_NAME, LONG_BOUND_NAME, LONG_OVER_NAME)
 
 
 CASES = [
@@ -204,8 +255,14 @@ CASES = [
     ("边界: 空串", "", False, EDGE),
     ("边界: 纯空格", "   ", False, EDGE),
     ("边界: 换行制表", "\n\t ", False, EDGE),
-    ("边界: 过短(2字, min=3)", "好吧", False, EDGE),
-    ("边界: 过长(600字, max=500)", LONG_600, False, EDGE),
+    # V1r：过短/过长改为**按当前配置**取值。
+    #   max_length 曾于 2026-10-12 由 500 放宽到 5000
+    #   （用户明确产品要求；证据 qq_native_re/findings/reply_fix/W5_maxlen_5000.md）
+    #   → 旧的"600 字必须判无效"是**过期预期**，不是代码回归；此处不再写死字数。
+    (SHORT_UNDER_NAME, pad_to(MIN_LEN - 1), False, EDGE),
+    (SHORT_AT_NAME, pad_to(MIN_LEN), True, EDGE),
+    (LONG_BOUND_NAME, pad_to(MAX_LEN - 1), True, EDGE),
+    (LONG_OVER_NAME, pad_to(MAX_LEN + 1), False, EDGE),
     ("边界: 纯 emoji", emoji_only(), False, EDGE),
     ("边界: 乱码（私用区）", gibberish(), False, EDGE),
     ("边界: 敏感词（_content_filter 负责）", sensitive_hit(), True, EDGE),
@@ -276,6 +333,31 @@ ck(not block_missed, f"语义契约·应拦截组 {len(block_rows)} 例全部判
 ck(not allow_hurt, f"语义契约·应放行组 {len(allow_rows)} 例全部判有效（误伤 0 例）",
    f"误伤={[c['name'] for c in allow_hurt]}")
 
+# V1r：长度边界按**当前配置**断言，且理由文案必须点出正确的那一侧
+#（max_length 曾于 2026-10-12 由 500 放宽到 5000；此处不写死 500/5000）
+_by_name = {c["name"]: c for c in RESULTS["cases"]}
+_len_bounds = (
+    (SHORT_UNDER_NAME, "过短", False),
+    (SHORT_AT_NAME, "有效", True),
+    (LONG_BOUND_NAME, "有效", True),
+    (LONG_OVER_NAME, "过长", False),
+)
+print()
+print(f"  >>> V1r 长度边界（现读 config: min_length={MIN_LEN} / max_length={MAX_LEN}"
+      f"；max_length 曾于 2026-10-12 由 500 放宽到 5000）")
+for _n, _want_kind, _want_valid in _len_bounds:
+    _r = _by_name.get(_n)
+    if _r is None:
+        ck(False, f"长度边界用例缺失: {_n}", "")
+        continue
+    _why = _r["reason"] or ""
+    if _want_valid:
+        _ok = (_r["valid"] is True)
+    else:
+        _ok = (_r["valid"] is False) and (_want_kind in _why)
+    ck(_ok, f"V1r 长度边界·{_want_kind}: {_n[:24]}… → valid={_r['valid']}",
+       f"len={_r['len']} reason={_why!r}")
+
 # 关键词覆盖证明：每条必拦短语都由**具体关键词**命中，不依赖已被移除的宽词 error
 for _item in CONTRACT_BLOCK:
     _hit = _eng._match_error_keyword(_item["text"], _KWS)
@@ -315,6 +397,24 @@ def _engine_with_dropped_keywords(drop_lower):
     kws = list(eng._content_checks.get("error_keywords", []))
     eng._content_checks["error_keywords"] = [k for k in kws if k.lower() not in drop_lower]
     return eng, kws
+
+
+def _engine_with_max_length(new_max):
+    """构造"坏配置"引擎：只把**内存里**的 max_length 换掉（不写配置文件）。
+
+    V1r 反向证明用：长度语义被改坏时，边界用例必须翻红。
+    """
+    eng = DE()
+    eng._content_checks = copy.deepcopy(eng._content_checks)
+    eng._content_checks["max_length"] = new_max
+    return eng
+
+
+def _len_edge_diff(rows):
+    """只取 V1r 动态长度边界 4 例中"判定与预期不符"的行。"""
+    return [r for r in rows
+            if r["group"] == EDGE and r["name"] in DYN_EDGE_NAMES
+            and r["valid"] != r["expect_valid"]]
 
 
 def _contract_diff(rows):
@@ -367,6 +467,43 @@ if SABOTAGE:
            f"消融 {list(_item['kws'])} → {_item['label']} 必须变为放行（契约随之翻红）",
            f"valid={_tgt[0]['valid'] if _tgt else '用例缺失'}"
            f" reason={_tgt[0]['reason'] if _tgt else '-'}")
+
+    # S-D / S-E 长度语义双向破坏（V1r）：内存里改 max_length 必须让边界用例翻红
+    print()
+    print("  V1r 长度边界消融（内存里改 max_length；真配置与 config 文件均不动）:")
+    _len_diff_A = _len_edge_diff(RESULTS["cases"])
+    ck(not _len_diff_A, f"S-D 对照：真配置（max_length={MAX_LEN}）下长度边界 4 例全部 PASS",
+       f"偏差={[r['name'] for r in _len_diff_A]}")
+
+    _SAB_SMALL = 10
+    _len_eng_small = _engine_with_max_length(_SAB_SMALL)
+    _len_rows_small = evaluate_cases(_len_eng_small, CASES)
+    _len_diff_small = _len_edge_diff(_len_rows_small)
+    print(f"        max_length {MAX_LEN} → {_SAB_SMALL}（内存）: 翻红 {len(_len_diff_small)} 例")
+    for r in _len_diff_small:
+        print(f"          [FAIL] {r['name']} → len={r['len']} valid={r['valid']} "
+              f"reason={r['reason']!r}（期望 valid={r['expect_valid']}）")
+    ck(bool(_len_diff_small),
+       f"S-D 调小 max_length（{MAX_LEN}→{_SAB_SMALL}）长度边界必须翻红（证明真会报警）",
+       f"翻红 {len(_len_diff_small)} 例: {[r['name'] for r in _len_diff_small]}")
+    ck(any(r["name"] == LONG_BOUND_NAME for r in _len_diff_small),
+       "S-D 被抓住的正是【本该合法却被判过长】的那条（点名到具体用例）",
+       f"命中={[r['name'] for r in _len_diff_small]}")
+
+    _SAB_LARGE = 10 ** 6
+    _len_eng_large = _engine_with_max_length(_SAB_LARGE)
+    _len_rows_large = evaluate_cases(_len_eng_large, CASES)
+    _len_diff_large = _len_edge_diff(_len_rows_large)
+    print(f"        max_length {MAX_LEN} → {_SAB_LARGE}（内存）: 翻红 {len(_len_diff_large)} 例")
+    for r in _len_diff_large:
+        print(f"          [FAIL] {r['name']} → len={r['len']} valid={r['valid']} "
+              f"reason={r['reason']!r}（期望 valid={r['expect_valid']}）")
+    ck(bool(_len_diff_large),
+       f"S-E 调大 max_length（{MAX_LEN}→{_SAB_LARGE}）长度边界必须翻红（反方向也会报警）",
+       f"翻红 {len(_len_diff_large)} 例: {[r['name'] for r in _len_diff_large]}")
+    ck(any(r["name"] == LONG_OVER_NAME and r["valid"] is True for r in _len_rows_large),
+       "S-E 被抓住的正是【超长却被放行】的那条（长度上限形同虚设）",
+       f"命中={[r['name'] for r in _len_diff_large]}")
 
     # 只读自证：sabotage 路径同样不得改写任何运行时文件
     print()

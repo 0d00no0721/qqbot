@@ -6,13 +6,12 @@
 
 | 路径 | 内容 |
 |---|---|
-| `decisions/` | 决策日志（编号 001~008）。每份记录：做了什么、实测证据、过程中的裁决、回滚方法、遗留待办 |
+| `decisions/` | 决策日志（编号 001~011）。每份记录：做了什么、实测证据、过程中的裁决、回滚方法、遗留待办 |
 | `findings/model_pool/` | 模型池完整证据链：`PROBE.md`（能力探针）、`W1~W6` 各阶段报告 |
-| `findings/reply_fix/` | 定向回复改造的回放对比（修前/修后行为基线） |
-| `findings/track_A~G/` | 各专题调查报告 |
-| `findings/vision/` | 视觉模块接线报告 |
-| `findings/observation_window/` | 观察窗记录 |
-| `prompts/` | 各 track 的原始任务书 |
+| `findings/reply_fix/` | 回复质量系列：定向回复回放对比（修前/修后基线）、禁编造收紧、熔断修复、长度上限 |
+| `findings/vision/` | 视觉（识图）模块接线报告与实弹证据 |
+| `findings/search/` | 联网搜索后端、质量闸门与验收报告 |
+| `findings/observation_window/` | 掉线观察窗记录（样本与判决） |
 
 ## 什么进仓库、什么不进
 
@@ -22,10 +21,12 @@
 
 | 模式 | 原因 |
 |---|---|
-| `patches/` | 改动前的文件备份副本，体积大且含运行时数据快照 |
+| `patches/` | 改动前的文件备份副本，体积大且含运行时数据快照（其中包含真实密钥备份，**必须排除**） |
+| `findings/rounds/`、`findings/upgrade/` | 掉线实验原始日志与 R3 升级的暂存/全量备份（数百 MB 安装包与快照），仅本机保留 |
+| `samples/`、`prompts/`、`findings/track_*`、`WORKFLOW.md`、`PROJECT_CONTEXT.md` | 逆向工程材料（第三方二进制、注入机制分析、绕过实验记录）——结论已固化在决策日志里，原始材料不外发 |
 | `**/*.jsonl` | 原始审计/回放调用流水 |
 | `probe_results*.json`、`replay_results*.json`、`context_data.json` | 探针与回放原始输出 |
-| `**/_*.py`、`**/_*/` | 一次性探针脚本与临时目录 |
+| `**/_*.py`、`**/_*.json`、`**/_*.txt`、`**/_*.patch`、`**/_*/` | 一次性探针脚本、日志与临时目录 |
 | `**/__pycache__/`、`**/*.tmp` | 缓存与临时文件 |
 
 原则：**报告进仓库，原始产物不进**——原始产物体积大、含运行时痕迹，且结论已在报告里固化。
