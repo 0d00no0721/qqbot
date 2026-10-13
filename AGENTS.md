@@ -14,7 +14,7 @@ cd E:\QQbot && $env:PYTHONIOENCODING="utf-8"; & ".\venv\Scripts\python" -c "impo
 
 NapCat must already be running (`E:\QQbot\NapCat\NapCat.44498.Shell\NapCatWinBootMain.exe`). Windows-only deployment; paths use `\` and `.exe`.
 
-## Architecture (post v2.3.2 refactor, current release v2.4.0)
+## Architecture (post v2.3.2 refactor, current release v2.5.0)
 
 `scripts/command_handler.py` is now a **~72-line facade** — all 指令 logic lives in `scripts/commands/`:
 
@@ -66,7 +66,7 @@ Loaded once by `load_dotenv()` in `reverse_bot.py`; `llm_pool.py` also loads it 
 
 ## Versioning
 
-`VERSION` lives in `scripts/commands/_state.py` (was in `command_handler.py` pre-v2.3.2). Format: `主版本.次版本.修订号`. Current: `2.4.0`. Git tags follow `vX.Y.Z`.
+`VERSION` lives in `scripts/commands/_state.py` (was in `command_handler.py` pre-v2.3.2). Format: `主版本.次版本.修订号`. Current: `2.5.0`. Git tags follow `vX.Y.Z`.
 
 ## Git / pushing from this repo
 

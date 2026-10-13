@@ -102,7 +102,7 @@ $env:PYTHONIOENCODING="utf-8"; .\venv\Scripts\python -c "import reverse_bot; pri
 
 ## 📌 当前状态
 
-- **版本**：`2.4.0`（`scripts/commands/_state.py`）；同步打 tag `v2.4.0`（模型池架构变更）
+- **版本**：`2.5.0`（`scripts/commands/_state.py`）；同步打 tag `v2.5.0`（联网搜索 + 回复质量系列）
 - **模型出口**：本地网关 `http://127.0.0.1:8090/v1`（**唯一出口，无云端兜底**）
 - **主模型**：`deepseek-flash`（`config/active_model.json`，必须在池内优先级链中）
 - **优先级链**：5 档 9 模型（deepseek-flash → deepseek-v4-flash-ascend → qwen3.8-flash-next → glm-5.3-flash → qwen3.8-reasoner）

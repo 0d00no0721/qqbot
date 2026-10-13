@@ -19,7 +19,7 @@ SCRIPT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__f
 BOT_QQ = "2668851638"
 DATA_FILE = os.path.join(SCRIPT_DIR, "menu_data.json")
 
-VERSION = "2.4.0"
+VERSION = "2.5.0"
 
 # ========== 模型出口：中央模型池（本地网关） ==========
 # 全项目唯一的模型出口是 scripts/llm_pool.py，其 base_url 来自
