@@ -37,6 +37,19 @@ try:
 except ImportError:  # 以脚本方式直接运行时（sys.path[0]=scripts/）
     from llm_pool import chat, chat_sync, available_models, LLMPoolExhausted
 
+# ---------- 联网搜索（借 DSH dsh-free-search 插件的 loopback bridge） ----------
+# 同样是双路兼容导入。**搜索是增强项**：模块缺失/环境缺 httpx 时降级为
+# "无搜索"（fail-closed），绝不因为搜索接不上而让整个机器人起不来。
+try:
+    from scripts import search_gate, web_search
+except ImportError:  # 以脚本方式直接运行时（sys.path[0]=scripts/）
+    try:
+        import search_gate
+        import web_search
+    except ImportError:
+        search_gate = None
+        web_search = None
+
 
 def _pool_available_models() -> list:
     """从中央模型池派生可用模型列表（config/model_pool.json 优先级链去重、保序）。
@@ -865,6 +878,96 @@ class DecisionEngine:
         ratio = valid_chars / len(text)
         return ratio < max_ratio
 
+    # ---------- 联网搜索（在子进程之前；任何失败都不阻断回复） ----------
+
+    async def _run_search(self, gid: str, target: Optional[dict],
+                          feature_on: bool) -> Optional[dict]:
+        """按需联网搜索，返回要下发给子进程的 "search" 载荷；不需要/失败 → None。
+
+        触发条件（**全部满足**才搜）：
+          · feature_on：本群 search 功能位已开启 —— 由调用方 reverse_bot 传入
+            （与该群其它功能位同源 `reverse_bot._feature_on`，不在此处重复读配置）；
+          · target 存在且有实质文本 —— 即"本轮在回应某条消息"；自主接话不搜。
+        是否真搜由 search_gate 三层判定 + 每群限流决定（T0>T1>T2>默认不搜，
+        fail-closed）；查询词、层号、限流拒绝原因都由 gate 打印 `[搜索] 判定=…`。
+
+        **绝不抛异常、绝不阻断回复**：判定/搜索/解析任何意外都收敛成 None，
+        本轮退回"无资料"的正常生成（即搜索挂掉只退化成"查不到"）。
+        """
+        if not feature_on:
+            # 默认不搜：未开该功能位的群连判定都不做（也避免日志噪音）
+            return None
+        if search_gate is None or web_search is None:
+            logger.warning("[搜索] 跳过（搜索模块不可用：scripts/search_gate.py 或 "
+                           "scripts/web_search.py 导入失败）")
+            return None
+        text = ""
+        if isinstance(target, dict):
+            text = str(target.get("content") or "").strip()
+        if not text:
+            logger.info("[搜索] 跳过（本轮无可回应的文本，不做自动搜索）")
+            return None
+
+        # ---- 三层判定（gate 自己打印判定行；异常已在 gate 内兜底） ----
+        try:
+            verdict = await search_gate.decide(text, str(gid), feature_on=True)
+        except Exception as e:  # 双保险：gate 契约是"不抛"，这里再兜一层
+            logger.warning("[搜索] 判定异常（按不搜处理）: %s: %s", type(e).__name__, e)
+            return None
+        if not isinstance(verdict, dict):
+            logger.warning("[搜索] 判定返回结构异常（按不搜处理）: %r", verdict)
+            return None
+
+        tier = str(verdict.get("tier") or "none")
+        query = str(verdict.get("query") or "").strip()
+        reason = str(verdict.get("reason") or "")
+        logger.info("[搜索] 判定=%s 层=%s 查询=%s",
+                    "搜" if verdict.get("search") else "不搜", tier, query)
+        if not verdict.get("search"):
+            self._debug("搜索", "不搜（%s）" % (reason or "未命中"))
+            return None
+        if not query:
+            logger.info("[搜索] 跳过（判定为搜但查询词为空）")
+            self._debug("搜索", "不搜（查询词为空）")
+            return None
+
+        # ---- 真搜（web_search 契约：永不抛异常，失败 → ok=False + reason） ----
+        try:
+            max_results = int(search_gate.load_config().get("max_results", 5))
+        except Exception:
+            max_results = 5
+        try:
+            # 透传 gate 判定的 time_range：鲜活查询（今天/今日/最新…）带上 "day" 后，
+            # bridge 会从 bing 自动切到 **exa**。实测同一查询两者结果质量天差地别：
+            #   bing → 今日头条/热榜/黄历（零天气页）；exa → 气象局等真实天气页（含 27℃/14℃）。
+            res = await web_search.search(query, max_results, verdict.get("time_range"))
+        except Exception as e:  # 双保险：search 契约是"不抛"
+            logger.warning("[搜索] 跳过（搜索异常 %s: %s）", type(e).__name__, str(e)[:120])
+            self._debug("搜索", "不搜（搜索异常）")
+            return None
+        if not isinstance(res, dict) or not res.get("ok"):
+            why = str((res or {}).get("reason") or "未知原因") if isinstance(res, dict) else "返回结构异常"
+            logger.info("[搜索] 跳过（%s）", why)
+            self._debug("搜索", "不搜（%s）" % why)
+            return None
+
+        sources = [s for s in (res.get("sources") or []) if isinstance(s, dict)][:5]
+        if not sources:
+            logger.info("[搜索] 跳过（无结果：sources 为空）")
+            self._debug("搜索", "不搜（无结果）")
+            return None
+
+        provider = str(res.get("provider") or "")
+        logger.info("[搜索] 结果=%d 条 provider=%s 耗时=%dms",
+                    len(sources), provider or "?", int(res.get("elapsed_ms") or 0))
+        self._debug("搜索", "层=%s 查询=%s 资料=%d条" % (tier, query, len(sources)))
+        return {
+            "query": query,
+            "provider": provider,
+            "sources": sources,
+            "content": str(res.get("content") or ""),
+        }
+
     # ---------- 独立脚本调用（子进程） ----------
 
     async def _call_model_script(
@@ -874,6 +977,7 @@ class DecisionEngine:
         max_tokens: int = 500,
         api_key: str = "",
         target: Optional[dict] = None,
+        search: Optional[dict] = None,
     ) -> str:
         """通过子进程调用独立模型脚本。
 
@@ -893,6 +997,12 @@ class DecisionEngine:
 
         字段 "avoid_recent"：本群最近 3 条**自己发出的**回复（防复读提示，
         需配合 target 使用；无 target 时子进程忽略）。
+
+        参数 search：本轮联网搜到的资料（dict：query/provider/sources/content），
+        或 None（没搜/没搜到）。**只在需要时才出现该 stdin 字段**——为 None 时
+        payload 与改动前逐字相同（子进程契约不变，既有回放基线继续成立）。
+        资料按"不可信外部数据"处理：仅在子进程里作为 prompt 的一个隔离段落注入，
+        不参与任何控制流。
         """
         logger.info("[调试] _call_model_script 被调用: script=%s, gid=%s",
                     os.path.basename(script_path), gid)
@@ -925,6 +1035,7 @@ class DecisionEngine:
             "api_key": effective_key,
             "target": target,
             "avoid_recent": avoid_recent,
+            **({"search": search} if search else {}),
         }, ensure_ascii=False)
 
         python_exe = sys.executable or "python"
@@ -971,7 +1082,8 @@ class DecisionEngine:
     # ---------- 故障转移回复生成（子进程隔离） ----------
 
     async def _generate_reply_with_failover(self, gid: str,
-                                            target: Optional[dict] = None) -> str:
+                                            target: Optional[dict] = None,
+                                            search_on: bool = False) -> str:
         """生成回复，主模型失败时自动切换备用模型。
 
         两个模型是独立脚本（子进程），各自维护独立的网络状态，
@@ -981,12 +1093,22 @@ class DecisionEngine:
 
         参数 target：本轮要回应的消息（见 _call_model_script），主/备两次调用
         使用**同一个** target，保证降档后回应对象不漂移。
+
+        参数 search_on：本群 search 功能位是否开启（由 reverse_bot 传入，
+        默认 False = 不搜，fail-closed）。置真时才进入搜索环节；搜到的资料
+        同样主/备共用一份（降档后依据不漂移）。搜索失败/超时/限流一律
+        继续正常生成，**不阻断回复**。
         """
         max_tokens = self.config.get("reply_max_tokens", 500)
 
+        # Step 0: 联网搜索（在子进程之前）——失败即当作"没资料"，照常生成
+        search_payload = await self._run_search(gid, target, search_on)
+        # 无搜索时**一个字段都不加**：与改动前的调用形状逐字相同（既有打桩/回放不受影响）
+        search_kw = {"search": search_payload} if search_payload else {}
+
         # Step 1: 尝试主模型（独立子进程）
         reply = await self._call_model_script(
-            self._primary_script, gid, max_tokens, target=target
+            self._primary_script, gid, max_tokens, target=target, **search_kw
         )
 
         if reply:
@@ -1004,7 +1126,7 @@ class DecisionEngine:
         # 密钥统一走模型池配置（LLM_POOL_API_KEY），不再读取任何云端密钥与云端端点
         logger.info("[熔断] 调用备用模型（独立进程）")
         reply = await self._call_model_script(
-            self._fallback_script, gid, max_tokens, target=target
+            self._fallback_script, gid, max_tokens, target=target, **search_kw
         )
 
         if reply:
@@ -1262,12 +1384,15 @@ class DecisionEngine:
         }
 
     async def _generate_reply_async(self, gid: str,
-                                    target: Optional[dict] = None) -> str:
+                                    target: Optional[dict] = None,
+                                    search_on: bool = False) -> str:
         """生成回复。入口统一使用故障转移版本。
 
         target：本轮要回应的消息（dict：nickname/uid/content），无明确对象时为 None。
+        search_on：本群 search 功能位是否开启（默认 False = 不搜）。
         """
-        return await self._generate_reply_with_failover(gid, target=target)
+        return await self._generate_reply_with_failover(gid, target=target,
+                                                       search_on=search_on)
 
     # ---------- 主决策方法 ----------
 
@@ -1278,10 +1403,14 @@ class DecisionEngine:
         group_id: str,
         is_at_bot: bool = False,
         sender_nickname: str = "",
+        search_on: bool = False,
     ) -> Tuple[bool, Optional[str]]:
         """
         判断是否应回复并生成回复内容。
         返回: (should_reply: bool, reply_text: str | None)
+
+        参数 search_on：本群联网搜索功能位是否开启（**调用方** reverse_bot 传入，
+        与该群其它功能位同源）。默认 False = 不搜（fail-closed，行为与接线前一致）。
         """
         gid = str(group_id)
 
@@ -1289,7 +1418,7 @@ class DecisionEngine:
         g_lock = await self._get_group_lock(gid)
         async with g_lock:
             return await self._should_reply_locked(
-                message, user_id, group_id, is_at_bot, sender_nickname
+                message, user_id, group_id, is_at_bot, sender_nickname, search_on
             )
 
     async def _should_reply_locked(
@@ -1299,6 +1428,7 @@ class DecisionEngine:
         group_id: str,
         is_at_bot: bool = False,
         sender_nickname: str = "",
+        search_on: bool = False,
     ) -> Tuple[bool, Optional[str]]:
         """should_reply 的内部实现，调用方必须持有 _group_locks[gid]"""
         self._debug_info = {}
@@ -1316,7 +1446,8 @@ class DecisionEngine:
             target = self._build_target(message, user_id, sender_nickname)
             self._debug("回应目标",
                         f"{target['nickname'] or '?'}({target['uid']})" if target else "无（回落旧 prompt）")
-            reply = await self._generate_reply_async(gid, target=target)
+            reply = await self._generate_reply_async(gid, target=target,
+                                                     search_on=search_on)
             if not reply:
                 self._debug("回复", "API 返回空")
                 self._debug("耗时_ms", str(int((time.time() - t_start) * 1000)))
@@ -1393,7 +1524,10 @@ class DecisionEngine:
         target = self._build_target(message, user_id, sender_nickname)
         self._debug("回应目标",
                     f"{target['nickname'] or '?'}({target['uid']})" if target else "无（回落旧 prompt）")
-        reply = await self._generate_reply_async(gid, target=target)
+        # 自主接话路径：search_on 恒为调用方传入的值（reverse_bot 只在 bot_mentioned
+        # 时为真），因此"自动搜索只在 @bot/别名命中时发生"由调用方保证。
+        reply = await self._generate_reply_async(gid, target=target,
+                                                 search_on=search_on)
         if not reply:
             self._debug("回复", "API 返回空")
             self._debug("耗时_ms", str(int((time.time() - t_start) * 1000)))

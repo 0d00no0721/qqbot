@@ -63,7 +63,7 @@ import threading
 _features_cache: dict = {"data": None, "mtime": 0.0}
 _features_lock = threading.Lock()
 _FEATURES_FILE = os.path.join(SCRIPT_DIR, "config", "group_features.json")
-_FEATURE_KEYS = ("decision_engine", "plus_one", "commands", "newcomer_welcome", "profile_record", "vision")
+_FEATURE_KEYS = ("decision_engine", "plus_one", "commands", "newcomer_welcome", "profile_record", "vision", "search")
 
 
 def _get_group_features(gid: str) -> dict:
@@ -443,6 +443,9 @@ async def handle_message(websocket, data: dict):
                 group_id=gid_str,
                 is_at_bot=bot_mentioned,
                 sender_nickname=nickname,
+                # 联网搜索：仅在本群开启 search 功能位**且**本轮是 @bot/别名命中时才有资格搜
+                # （自主接话不搜；真正是否搜由 search_gate 三层判定 + 限流决定）
+                search_on=_feature_on(gid_str, "search") and bot_mentioned,
             )
 
             elapsed_ms = int((time.time() - t_decision) * 1000)
