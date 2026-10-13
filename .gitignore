@@ -67,6 +67,7 @@ qq_native_re/**/replay_set.json
 qq_native_re/**/context_*.txt
 qq_native_re/**/prompt_old_*.txt
 qq_native_re/**/prompt_new_*.txt
+qq_native_re/**/*.txt
 
 # ---------- 逆向工程材料：不进公开仓库（第三方二进制 + 注入分析 + 绕过实验）----------
 qq_native_re/samples/
