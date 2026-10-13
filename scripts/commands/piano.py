@@ -367,7 +367,10 @@ def _piano_match(msg: str):
 async def cmd_piano(ctx: CommandContext, _matched=None) -> bool:
     rest = ctx.clean_message[2:].strip()
     if rest in ("帮助", "help"):
-        help_path = os.path.join(_state.SCRIPT_DIR, "SimPiano.md")
+        # 目录整理后该文件位于 docs/；保留根目录回退，兼容尚未同步的旧克隆
+        help_path = os.path.join(_state.SCRIPT_DIR, "docs", "SimPiano.md")
+        if not os.path.exists(help_path):
+            help_path = os.path.join(_state.SCRIPT_DIR, "SimPiano.md")
         try:
             with open(help_path, "r", encoding="utf-8") as f:
                 content = f.read()

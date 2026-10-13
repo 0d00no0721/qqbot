@@ -23,7 +23,10 @@ except ImportError:
 
 
 # ========== 算卦/占卜数据 ==========
-YIJING_DATA_FILE = os.path.join(_state.SCRIPT_DIR, "yijing_structured_fixed.json")
+# 目录整理后该文件位于 data/；保留根目录回退，兼容尚未同步的旧克隆
+YIJING_DATA_FILE = os.path.join(_state.SCRIPT_DIR, "data", "yijing_structured_fixed.json")
+if not os.path.exists(YIJING_DATA_FILE):
+    YIJING_DATA_FILE = os.path.join(_state.SCRIPT_DIR, "yijing_structured_fixed.json")
 
 TRIGRAM_NUM = {"乾": 1, "兌": 2, "離": 3, "震": 4, "巽": 5, "坎": 6, "艮": 7, "坤": 8}
 

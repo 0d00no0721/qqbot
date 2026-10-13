@@ -94,6 +94,7 @@ qq_native_re/findings/artifact_surface/
 .gh_*
 .acl-recovery/
 drill_out.txt
+tools/
 check_bypass_log.bat
 check_bypass_log.ps1
 start_napcat_verbose.bat

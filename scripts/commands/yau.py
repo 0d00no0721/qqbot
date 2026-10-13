@@ -25,7 +25,10 @@ YAU_SYSTEM_PROMPT_BUILTIN = """你是当代著名数学家、菲尔兹奖得主�
 
 def load_yau_system_prompt() -> str:
     """尝试从外部文件加载风格指令，失败则使用内置精简版"""
-    style_file = os.path.join(_state.SCRIPT_DIR, "yau_style.txt")
+    # 目录整理后该文件位于 data/；保留根目录回退，兼容尚未同步的旧克隆
+    style_file = os.path.join(_state.SCRIPT_DIR, "data", "yau_style.txt")
+    if not os.path.exists(style_file):
+        style_file = os.path.join(_state.SCRIPT_DIR, "yau_style.txt")
     if os.path.exists(style_file):
         try:
             with open(style_file, "r", encoding="utf-8") as f:

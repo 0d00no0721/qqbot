@@ -157,8 +157,13 @@ $env:PYTHONIOENCODING="utf-8"; .\venv\Scripts\python -c "import reverse_bot; pri
 | `scripts/group_manager.py` | 群功能管理 CLI |
 | `scripts/memory_manager.py` | 记忆/人设管理 CLI |
 | `config/` | 全部可热改配置（JSON） |
+| `data/` | 静态数据：`yijing_structured_fixed.json`（算卦六十四卦）、`yau_style.txt`（Yau 风格指令） |
+| `docs/` | 文档：`PROJECT_INDEX.md`（项目速览）、`VERSION_HISTORY.md`（版本史）、`SimPiano.md`（钢琴曲谱规范） |
+| `tools/` | 本机运维脚本（NapCat verbose 启动、bypass 取证），**不入库** |
 | `qq_native_re/` | 工程档案：决策日志 + 实测报告（见该目录 README） |
-| `NapCat/` `venv/` `models_cache/` | 依赖，不入库 |
+| `NapCat/` `venv/` `models_cache/` `logs/` `pixivtools-src/` | 依赖与运行时目录，**不入库** |
+
+> 运行时数据文件保持在仓库根目录（`menu_data.json` / `user_profiles.json` / `scripts/sign_in_data.json` / `.env`），代码按根路径读取；它们已在 `.gitignore` 中排除。
 
 ---
 
