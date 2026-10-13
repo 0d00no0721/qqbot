@@ -13,6 +13,7 @@ import os
 import sys
 import traceback
 import logging
+from dataclasses import dataclass
 from typing import Dict, List, Optional
 
 try:
@@ -96,8 +97,18 @@ _speak_buffer: Dict[str, Dict[str, List[str]]] = {}   # {gid: {uid: [msgs]}}
 _profiles: Dict[str, Dict[str, str]] = {}             # {gid: {uid: "自然语言描述"}}
 # NapCat 连接状态（由 reverse_bot.py 在 WS 连/断时更新）
 _napcat_connected: bool = True
-# 受限时段内失败的待重试队列（结构同 _speak_buffer）
-_pending_retry: Dict[str, Dict[str, List[str]]] = {}
+# 常规更新和重试串行领取批次；record_message 不需要等待模型调用。
+_update_lock = asyncio.Lock()
+
+
+@dataclass
+class _ProfileBatch:
+    messages: List[str]
+    regular_fallback: bool = False
+
+
+# 批次只存一份；regular_fallback 表示也可由下次常规周期领取。
+_pending_retry: Dict[str, Dict[str, List[_ProfileBatch]]] = {}
 
 # ========== 持久化路径 ==========
 _PROFILE_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -194,8 +205,47 @@ async def update_profiles():
     if not PROFILE_ENABLED:
         return
 
+    async with _update_lock:
+        await _update_profiles_locked()
+
+
+def _take_pending_batches(regular_only: bool = False):
+    """领取符合调度资格的批次，保留同一用户其余批次的顺序。需持有更新锁。"""
+    snapshot = {}
+    for gid, users in list(_pending_retry.items()):
+        for uid, batches in list(users.items()):
+            selected = [b for b in batches if not regular_only or b.regular_fallback]
+            remaining = [b for b in batches if regular_only and not b.regular_fallback]
+            if selected:
+                snapshot.setdefault(gid, {})[uid] = selected
+            if remaining:
+                users[uid] = remaining
+            else:
+                del users[uid]
+        if not users:
+            del _pending_retry[gid]
+    return snapshot
+
+
+def _restore_messages(gid: str, uid: str, msgs: List[str]):
+    """旧批次放在处理期间新收到的发言前，不按文本去重。"""
+    _speak_buffer.setdefault(gid, {}).setdefault(uid, [])[:0] = msgs
+
+
+def _queue_batch(gid: str, uid: str, msgs: List[str], regular_fallback: bool = False):
+    _pending_retry.setdefault(gid, {}).setdefault(uid, []).append(
+        _ProfileBatch(msgs, regular_fallback)
+    )
+
+
+async def _update_profiles_locked():
     buffer_snapshot = _speak_buffer.copy()
     _speak_buffer.clear()
+    for gid, users in _take_pending_batches(regular_only=True).items():
+        for uid, batches in users.items():
+            msgs = [msg for batch in batches for msg in batch.messages]
+            fresh = buffer_snapshot.setdefault(gid, {}).get(uid, [])
+            buffer_snapshot[gid][uid] = msgs + fresh
 
     if not buffer_snapshot:
         print("[画像] 无新发言，跳过更新")
@@ -215,7 +265,7 @@ async def update_profiles():
         for uid, msgs in users.items():
             if len(msgs) < PROFILE_MIN_MESSAGES:
                 # 发言太少，放回缓冲等待积累
-                _speak_buffer.setdefault(gid, {}).setdefault(uid, []).extend(msgs)
+                _restore_messages(gid, uid, msgs)
                 continue
 
             existing = _profiles.get(gid, {}).get(uid)
@@ -229,23 +279,22 @@ async def update_profiles():
                     # 受限时段失败
                     if not _napcat_connected:
                         # NapCat 掉线 → 入待重试队列（不塞回 speak_buffer，等重连后重试）
-                        _pending_retry.setdefault(gid, {})[uid] = msgs
+                        _queue_batch(gid, uid, msgs)
                         print(f"[画像] 受限时段 + NapCat 掉线，加入待重试队列: 群{gid} 用户{uid}")
                     else:
-                        # 其他问题 → 入待重试队列 + 也放回 speak_buffer（5min短周期+下次2h周期双重兜底）
-                        _pending_retry.setdefault(gid, {})[uid] = msgs
-                        _speak_buffer.setdefault(gid, {}).setdefault(uid, []).extend(msgs)
-                        print(f"[画像] 受限时段 API 失败，加入待重试队列+缓冲: 群{gid} 用户{uid}")
+                        # 一份批次供 5min 重试或下次 2h 周期领取，任一成功即消费。
+                        _queue_batch(gid, uid, msgs, regular_fallback=True)
+                        print(f"[画像] 受限时段 API 失败，加入待重试队列（常规周期可兜底）: 群{gid} 用户{uid}")
                 else:
                     # 非受限时段：主备都失败，放回缓冲下次重试
-                    _speak_buffer.setdefault(gid, {}).setdefault(uid, []).extend(msgs)
+                    _restore_messages(gid, uid, msgs)
             except Exception as e:
                 print(f"[画像] 更新失败 群{gid} 用户{uid}: {e}")
                 traceback.print_exc()
                 if school_only and not _napcat_connected:
-                    _pending_retry.setdefault(gid, {})[uid] = msgs
+                    _queue_batch(gid, uid, msgs)
                 else:
-                    _speak_buffer.setdefault(gid, {}).setdefault(uid, []).extend(msgs)
+                    _restore_messages(gid, uid, msgs)
 
     if updated_count > 0:
         save_profiles()
@@ -261,24 +310,26 @@ async def retry_pending_updates() -> int:
     NapCat 重连后立即触发，或定时更新后 5 分钟短周期触发。
     返回成功更新的用户数。
     """
-    global _pending_retry
+    async with _update_lock:
+        return await _retry_pending_updates_locked()
 
+
+async def _retry_pending_updates_locked() -> int:
     if not _pending_retry:
         return 0
 
     school_only = _is_school_only_hours()
-    snapshot = _pending_retry.copy()
-    _pending_retry = {}
+    snapshot = _take_pending_batches()
 
     updated_count = 0
-    still_pending: Dict[str, Dict[str, List[str]]] = {}
 
     total = sum(len(u) for u in snapshot.values())
     logger.info("开始重试待更新队列，共 %d 个用户（当前%s时段）", total,
                 "仅学校 API" if school_only else "非受限")
 
     for gid, users in snapshot.items():
-        for uid, msgs in users.items():
+        for uid, batches in users.items():
+            msgs = [msg for batch in batches for msg in batch.messages]
             existing = _profiles.get(gid, {}).get(uid)
             try:
                 result = await _call_profile_api(msgs, existing, school_only)
@@ -288,21 +339,19 @@ async def retry_pending_updates() -> int:
                     logger.info("重试成功: 群%s 用户%s", gid, uid)
                 elif school_only and not _napcat_connected:
                     # NapCat 仍然掉线，留在队列继续等待
-                    still_pending.setdefault(gid, {})[uid] = msgs
+                    _pending_retry.setdefault(gid, {}).setdefault(uid, [])[:0] = batches
                     logger.info("重试仍失败（NapCat 仍掉线），继续等待: 群%s 用户%s", gid, uid)
                 else:
                     # 其他原因 → 放回 speak_buffer 等下次 2h 周期
-                    _speak_buffer.setdefault(gid, {}).setdefault(uid, []).extend(msgs)
+                    _restore_messages(gid, uid, msgs)
                     logger.info("重试失败，放回缓冲等下次周期: 群%s 用户%s", gid, uid)
             except Exception as e:
                 logger.error("重试异常 群%s 用户%s: %s", gid, uid, e)
                 traceback.print_exc()
                 if school_only and not _napcat_connected:
-                    still_pending.setdefault(gid, {})[uid] = msgs
+                    _pending_retry.setdefault(gid, {}).setdefault(uid, [])[:0] = batches
                 else:
-                    _speak_buffer.setdefault(gid, {}).setdefault(uid, []).extend(msgs)
-
-    _pending_retry = still_pending
+                    _restore_messages(gid, uid, msgs)
 
     if updated_count > 0:
         save_profiles()
