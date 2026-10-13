@@ -1,2 +1,0 @@
-[model_fallback] 调用成功: 命中模型=deepseek-flash
-{"reply": "适合出去走走"}

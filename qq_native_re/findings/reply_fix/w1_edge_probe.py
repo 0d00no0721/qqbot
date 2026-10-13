@@ -79,7 +79,7 @@ res.append(run("边界1  target.content = 图片 CQ 码（UC 10:25:42 真实形�
 
 res.append(run("边界2  target.content = QQ小程序 JSON 卡片（EVEN 10:26:18 真实形态）",
                {"context": CONTEXT, "persona": PERSONA, "max_tokens": 80,
-                "target": {"nickname": "EVEN", "uid": "10001", "content": JSON_CQ}}))
+                "target": {"nickname": "EVEN", "uid": "10002", "content": JSON_CQ}}))
 
 res.append(run("边界3  target.content = reply+at 前缀（UC 10:25:00 真实形态）",
                {"context": CONTEXT, "persona": PERSONA, "max_tokens": 80,
