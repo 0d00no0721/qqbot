@@ -3,6 +3,7 @@
     "max_message_tasks": 16,
     "max_model_calls": 4,
     "max_pending": 50,
+    "max_prefetch_bytes": 33554432,
     "max_pending_per_group": 3,
     "queue_wait_seconds": 180,
     "casual_wait_seconds": 15,

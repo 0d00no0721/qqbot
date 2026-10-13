@@ -29,6 +29,8 @@ from sklearn.metrics.pairwise import cosine_similarity
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from scripts.request_limits import limit_model_calls, track_model_script
+
 # ---------- 中央模型池（本地网关，唯一模型出口） ----------
 # 双路兼容导入：reverse_bot.py 以包方式导入本模块时 scripts/ 不在 sys.path，
 # 而本文件被当脚本直接执行时 sys.path[0]=scripts/。两种方式都要能导入成功。
@@ -873,6 +875,7 @@ class DecisionEngine:
 
     # ---------- 独立脚本调用（子进程） ----------
 
+    @track_model_script
     async def _call_model_script(
         self,
         script_path: str,
@@ -976,6 +979,7 @@ class DecisionEngine:
 
     # ---------- 故障转移回复生成（子进程隔离） ----------
 
+    @limit_model_calls
     async def _generate_reply_with_failover(self, gid: str,
                                             target: Optional[dict] = None) -> str:
         """生成回复，主模型失败时自动切换备用模型。

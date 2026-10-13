@@ -254,63 +254,25 @@ def _cq_reply_id(raw_message: str) -> str:
     return ""
 
 
-async def _describe_triggered_image(gid_str: str, message_images: list, raw_message: str,
-                                    uid_str: str, clean_message: str, candidates_snapshot=None) -> list:
-    """按「本消息 → 引用 → 最近-同人 → 最近-本群」选图并识图。
-
-    返回 `[图片: 描述]` 结果文本列表（0~1 条）。**任何失败都只是返回空列表**，
-    由调用层决定要不要拼进消息文本；本函数不发送消息、不改全局状态（除限流计数）。
-    """
-    from scripts import image_cache, image_utils, vision
+def _prefetch_triggered_image(prefetch, gid_str, candidates_snapshot):
+    """准入后立即完成原有闸门，再预取短效直链；出队时不重复占额/去重。"""
+    from scripts import image_cache, image_utils
     from scripts.commands import _state
 
-    # ---- 限流（先占额再识图，宁可少识不可无限识） ----
     allowed, used = _state.vision_rate_ok(gid_str, VISION_MAX_PER_HOUR, VISION_RATE_WINDOW)
     if not allowed:
         bot_logger.info(f"[识图] 跳过（限流：本群 1h 内已识 {used} 张，上限 {VISION_MAX_PER_HOUR}）")
-        return []
-
-    candidates, source = candidates_snapshot if candidates_snapshot is not None else image_cache.select_candidates(
-        raw_message, gid_str, uid_str,
-        message_images=message_images,
-        within=VISION_RECENT_WINDOW,
-        limit=VISION_PICK_MAX,
-    )
-    if not candidates:
-        bot_logger.info(f"[识图] 跳过（没有可用图片：引用未命中缓存且窗口内无图）")
-        return []
-
-    bot_logger.info(f"[识图] 触发：路径={source} 候选={len(candidates)} 张")
-
-    described: list = []
-    for meta in candidates:
-        tag = str(meta.get("file") or image_cache.image_signature(meta) or "?")
-        # 闸门 1：贴图/动画表情默认跳过（引用路径来的不跳——用户明确引用了它）
+        return
+    candidates, source = candidates_snapshot
+    eligible = []
+    for meta in candidates[:VISION_PICK_MAX]:
         if source != "引用" and image_utils.is_sticker(meta):
-            bot_logger.info(f"[识图] 跳过（贴图/表情：{tag}）")
             continue
-        # 闸门 2：同图哈希窗口内去重
         sig = image_cache.image_hash(meta)
         if sig and image_cache.seen_hash(gid_str, sig, VISION_SEEN_WINDOW):
-            bot_logger.info(f"[识图] 跳过（同图去重：{tag}）")
             continue
-        # 闸门 3：直链可能已过期（rkey 时效）→ fetch_image 返回 None，静默降级
-        img_bytes = image_utils.fetch_image(meta)
-        if not img_bytes:
-            bot_logger.info(f"[识图] 跳过（下载失败/直链过期：{tag}）")
-            continue
-        data_url = image_utils.to_data_url(img_bytes)
-        if not data_url:
-            bot_logger.info(f"[识图] 跳过（图片解码失败：{tag}）")
-            continue
-        ok, desc = await vision.describe(data_url, hint=clean_message)
-        if not ok or not desc:
-            bot_logger.info(f"[识图] 跳过（识别失败/空描述：{tag}）")
-            continue
-        described.append(f"[图片: {desc}]")
-        bot_logger.info(f"[识图] 成功：{tag} → {desc}")
-        break  # 一次只识一张：多条候选里取最新的那张即可
-    return described
+        eligible.append(meta)
+    prefetch.start(eligible)
 
 
 # ========== 消息处理 ==========
@@ -422,10 +384,19 @@ async def handle_message(websocket, data: dict):
         snapshot = dict(data)
         snapshot.pop("_receipt_previous", None)
         snapshot["sender"] = dict(data.get("sender") or {})
-        message_queue.submit(websocket, snapshot,
+        from scripts.image_prefetch import ImagePrefetch
+        prefetch = ImagePrefetch()
+        accepted = message_queue.submit(websocket, snapshot,
             lambda: _run_chat_message(websocket, snapshot, clean_message, raw_message,
-                                     bot_mentioned, list(message_images), context_entry, candidates),
-            explicit=bot_mentioned)
+                                     bot_mentioned, context_entry, prefetch),
+            explicit=bot_mentioned, cleanup=prefetch.close)
+        # 发言已记录一次；未获聊天准入的消息不下载、不占识图额度。
+        if accepted and bot_mentioned and _feature_on(gid_str, "vision"):
+            try:
+                _prefetch_triggered_image(prefetch, gid_str, candidates)
+            except Exception as exc:
+                bot_logger.info("[识图] 预取准备失败，沿用文本链：%s", type(exc).__name__)
+
 
     # ===== +1 检测 =====
     gid = str(group_id)
@@ -451,7 +422,7 @@ async def handle_message(websocket, data: dict):
 
 
 async def _run_chat_message(websocket, data, clean_message, raw_message, bot_mentioned,
-                            message_images, context_entry, candidates_snapshot):
+                            context_entry, prefetch):
     group_id = data["group_id"]
     gid_str, uid_str = str(group_id), str(data["user_id"])
     nickname = data.get("sender", {}).get("nickname", "")
@@ -465,13 +436,13 @@ async def _run_chat_message(websocket, data, clean_message, raw_message, bot_men
     text_for_bot = clean_or_raw
     if bot_mentioned and _feature_on(gid_str, "vision"):
         try:
-            vision_desc = await _describe_triggered_image(
-                gid_str, message_images, raw_message, uid_str, clean_message, candidates_snapshot,
-            )
+            vision_desc = await prefetch.describe(clean_message)
         except Exception as e:
             # 识图是增强项：任何意外都只记一行日志，文本链照常走
             bot_logger.info(f"[识图] 出错（已忽略，不影响文本回复）: {e}")
             vision_desc = []
+        finally:
+            prefetch.close()
         if vision_desc:
             # 方案 a（PM 定稿）：把 `[图片: 描述]` 拼进消息文本，复用既有决策链
             # （人设/记忆/密度/冷却全部生效）；**禁止**把图字节/base64 放进上下文缓冲。

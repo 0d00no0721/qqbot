@@ -23,6 +23,7 @@ class Job:
     received: float
     deadline: float
     notified: bool = False
+    cleanup: object = None
 
     @property
     def gid(self):
@@ -38,6 +39,7 @@ class MessageQueue:
         self.active = {}
         self.groups_active = set()
         self.notices = {}
+        self.cleanup_tasks = {}
         self.cooldowns = OrderedDict()
         self.timer = None
         self.closed = False
@@ -80,7 +82,7 @@ class MessageQueue:
         job = Job(websocket, data, None, True, self.config.get(data["group_id"]), now, now)
         self.notice(job, "full")
 
-    def submit(self, websocket, data, runner, explicit=False):
+    def submit(self, websocket, data, runner, explicit=False, cleanup=None):
         if self.closed:
             return False
         self.tick()
@@ -88,7 +90,7 @@ class MessageQueue:
         cfg = self.config.get(data["group_id"])
         ttl = cfg["queue_wait_seconds"] if explicit else cfg["casual_wait_seconds"]
         received = data.get("_received_monotonic", now)
-        job = Job(websocket, dict(data), runner, explicit, cfg, now, received + ttl)
+        job = Job(websocket, dict(data), runner, explicit, cfg, now, received + ttl, cleanup=cleanup)
         if job.deadline <= now:
             self.notice(job, "expired")
             logger.info("[消息队列] outcome=expired group=%s", job.gid)
@@ -102,6 +104,7 @@ class MessageQueue:
             for previous in list(jobs):
                 if not previous.explicit:
                     jobs.remove(previous)
+                    self._dispose(previous)
                     logger.info("[消息队列] outcome=coalesced group=%s", gid)
         if ((explicit and sum(j.explicit for j in jobs) >= cfg["max_pending_per_group"])
                 or self.pending_count >= self.config.get()["max_pending"]):
@@ -115,6 +118,14 @@ class MessageQueue:
         self._drain()
         self._schedule_timer()
         return True
+
+    def _dispose(self, job):
+        if job.cleanup is not None:
+            cleanup, job.cleanup = job.cleanup, None
+            task = cleanup()
+            if task is not None and not task.done():
+                self.cleanup_tasks[task] = job.websocket
+                task.add_done_callback(lambda done: self.cleanup_tasks.pop(done, None))
 
     def _start(self, job):
         self.groups_active.add(job.gid)
@@ -142,17 +153,18 @@ class MessageQueue:
                 duration = max(0, self.clock() - started)
                 intake = max(0, job.received - job.data.get("_received_monotonic", job.received))
                 logger.info("[请求耗时] group=%s queue_ms=%d preprocess_ms=%d model_ms=%d "
-                            "total_ms=%d attempts=%d outcome=%s", job.gid,
+                            "total_ms=%d attempts=%d script_attempts=%d outcome=%s", job.gid,
                             int((wait + state.model_wait) * 1000),
                             int(max(0, intake + duration - state.model_wait - state.model_time) * 1000),
                             int(state.model_time * 1000), int((intake + duration + wait) * 1000),
-                            state.attempts, outcome)
+                            state.attempts, state.script_attempts, outcome)
                 request_state.reset(token)
 
         task = asyncio.create_task(run())
         self.active[task] = job
 
         def finished(done):
+            self._dispose(job)
             self.active.pop(done, None)
             self.groups_active.discard(job.gid)
             if not self.closed:
@@ -177,6 +189,7 @@ class MessageQueue:
             for job in list(jobs):
                 if job.deadline <= now:
                     jobs.remove(job)
+                    self._dispose(job)
                     self.notice(job, "expired")
                     logger.info("[消息队列] outcome=expired group=%s", gid)
                 elif job.explicit and not job.notified and now >= job.received + job.settings["wait_notice_seconds"]:
@@ -204,6 +217,7 @@ class MessageQueue:
         cancelled = []
         for task, job in list(self.active.items()):
             if job.websocket is websocket:
+                self._dispose(job)
                 task.cancel()
                 cancelled.append(task)
         for task, owner in list(self.notices.items()):
@@ -211,19 +225,29 @@ class MessageQueue:
                 task.cancel()
                 cancelled.append(task)
         for gid, jobs in list(self.pending.items()):
+            for job in jobs:
+                if job.websocket is websocket:
+                    self._dispose(job)
             remaining = deque(job for job in jobs if job.websocket is not websocket)
             if remaining:
                 self.pending[gid] = remaining
             else:
                 self.pending.pop(gid, None)
         self._schedule_timer()
+        cancelled.extend(task for task, owner in self.cleanup_tasks.items() if owner is websocket)
         return cancelled
 
     async def close(self):
         self.closed = True
+        for jobs in self.pending.values():
+            for job in jobs:
+                self._dispose(job)
         self.pending.clear()
         self._schedule_timer()
         tasks = list(self.active) + list(self.notices)
+        for job in self.active.values():
+            self._dispose(job)
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+        await asyncio.gather(*list(self.cleanup_tasks), return_exceptions=True)

@@ -166,6 +166,27 @@ class QueueTests(unittest.IsolatedAsyncioTestCase):
 
 
 class GateTests(unittest.IsolatedAsyncioTestCase):
+    async def test_cancel_at_completed_grant_does_not_start_model_work(self):
+        gate = rl.ModelGate(Config(max_model_calls=1))
+        await gate.acquire(rl.RequestState())
+        executed = []
+
+        async def waiting():
+            await gate.acquire(rl.RequestState())
+            executed.append(True)
+            gate.release()
+
+        task = asyncio.create_task(waiting())
+        await settle()
+        future = gate.waiters[0][1]
+        gate.release()
+        future.set_result(None)  # 已授予，调用方恢复之前同一轮发生取消
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        self.assertEqual(executed, [])
+        self.assertEqual(gate.active, 0)
+
     async def test_capacity_expiry_cancel_and_handoff_release_every_slot(self):
         cfg = Config(max_model_calls=1, max_pending=1)
         gate = rl.ModelGate(cfg)
@@ -344,6 +365,7 @@ class IngressTests(unittest.IsolatedAsyncioTestCase):
                 _run_chat_message=chat, handle_command=AsyncMock(side_effect=dispatch),
                 record_message=lambda *args: records.append(args), get_profile=lambda *_: "",
                 PROFILE_ENABLED=True, group_histories={"1": __import__("collections").deque(maxlen=50)}), \
+                patch.object(self.bot, "_prefetch_triggered_image") as prepare, \
                 patch.object(commands, "processed_msg_ids", set()), \
                 patch.object(image_cache, "select_candidates", return_value=([{"url": "original"}], "引用")):
             mention = f"[CQ:at,qq={self.bot.BOT_QQ}] "
@@ -366,7 +388,7 @@ class IngressTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(records), 4)
             self.assertEqual(captured[1][1]["user_id"], 3)
             self.assertEqual(captured[1][1]["sender"]["nickname"], "3")
-            self.assertEqual(captured[1][-1], ([{"url": "original"}], "引用"))
+            self.assertEqual(prepare.call_args_list[1].args[2], ([{"url": "original"}], "引用"))
             self.assertEqual(len(captured), 3)  # 第一条、第二条、最后的闲聊
 
     async def test_dedup_evicts_one_old_id_and_preserves_public_export(self):

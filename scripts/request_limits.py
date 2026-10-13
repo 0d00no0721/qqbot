@@ -17,13 +17,14 @@ from pathlib import Path
 CONFIG_FILE = Path(__file__).resolve().parent.parent / "config" / "message_limits.json"
 DEFAULTS = {
     "max_message_tasks": 16, "max_model_calls": 4, "max_pending": 50,
+    "max_prefetch_bytes": 32 * 1024 * 1024,
     "max_pending_per_group": 3, "queue_wait_seconds": 180, "casual_wait_seconds": 15,
     "wait_notice_seconds": 10, "notice_cooldown_seconds": 30, "notices_enabled": True,
     "wait_message": "已收到，正在排队，请不用重复发送。",
     "full_message": "现在排队的人有点多，请稍后再试。",
     "expired_message": "这条消息等待过久还没开始处理，请重新 @ 我。",
 }
-GLOBAL_KEYS = {"max_message_tasks", "max_model_calls", "max_pending"}
+GLOBAL_KEYS = {"max_message_tasks", "max_model_calls", "max_pending", "max_prefetch_bytes"}
 logger = logging.getLogger("qqbot")
 
 
@@ -91,6 +92,7 @@ class RequestState:
     model_wait: float = 0
     model_time: float = 0
     attempts: int = 0
+    script_attempts: int = 0
     admission_reason: str = ""
     generation_started: bool = False
     on_wait: object = None
@@ -98,6 +100,7 @@ class RequestState:
 
 
 request_state = contextvars.ContextVar("qqbot_request_state", default=None)
+_model_cleanup = contextvars.ContextVar("qqbot_model_cleanup", default=None)
 
 
 class ModelAdmissionError(RuntimeError):
@@ -144,7 +147,11 @@ class ModelGate:
         timer = (loop.call_later(state.wait_notice_seconds, state.on_wait)
                  if state.on_wait else None)
         try:
-            await asyncio.wait_for(asyncio.shield(future), max(0, state.remaining_wait))
+            # 避免 Python 3.10 wait_for 在授予名额与取消同时发生时吞掉取消。
+            done, _ = await asyncio.wait({future}, timeout=max(0, state.remaining_wait))
+            if not done:
+                raise asyncio.TimeoutError
+            future.result()
         except BaseException as exc:
             with self.lock:
                 future.cancel()
@@ -181,6 +188,26 @@ def note_model_attempt():
         state.attempts += 1
 
 
+def track_model_script(fn):
+    """与 #2 的回收通知对接；未退出的进程仍归本次名额负责。"""
+    @functools.wraps(fn)
+    async def tracked(*args, **kwargs):
+        from scripts.process_guard import cleanup_observer
+        cleanup = _model_cleanup.get()
+        if cleanup is not None and any(not task.done() for task in cleanup):
+            # 极端情况下创建超过总时限，不能在旧进程尚存时再启动备用进程。
+            raise ModelAdmissionError("上一模型进程仍在回收，停止追加调用")
+        token = cleanup_observer.set(cleanup.add if cleanup is not None else None)
+        state = request_state.get()
+        if state:
+            state.script_attempts += 1
+        try:
+            return await fn(*args, **kwargs)
+        finally:
+            cleanup_observer.reset(token)
+    return tracked
+
+
 def limit_model_calls(fn):
     """必须放在生成超时装饰器之外，排队不会消耗生成预算。"""
     @functools.wraps(fn)
@@ -192,6 +219,9 @@ def limit_model_calls(fn):
             token = request_state.set(state)
         try:
             await model_gate.acquire(state)
+            gate = model_gate
+            cleanup = set()
+            cleanup_token = _model_cleanup.set(cleanup)
             state.generation_started = True
             state.remaining_wait = limits.get()["queue_wait_seconds"]
             began = time.monotonic()
@@ -199,7 +229,18 @@ def limit_model_calls(fn):
                 return await fn(*args, **kwargs)
             finally:
                 state.model_time += time.monotonic() - began
-                model_gate.release()
+                _model_cleanup.reset(cleanup_token)
+                pending = {task for task in cleanup if not task.done()}
+                if pending:
+                    # 不等待超过总时限，但也不提前退还仍被实际子进程占用的名额。
+                    def reaped(done):
+                        pending.discard(done)
+                        if not pending:
+                            gate.release()
+                    for task in tuple(pending):
+                        task.add_done_callback(reaped)
+                else:
+                    gate.release()
         finally:
             if token is not None:
                 request_state.reset(token)
