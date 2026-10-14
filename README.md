@@ -8,6 +8,9 @@
 - 五段式 Persona + 六分类记忆的角色系统
 - Windows 部署，Python 3.10+
 
+可选的 [独立语音输出](docs/VOICE_OUTPUT.md) 支持 `@bot 朗读`、按群附带语音或只发语音，
+提供 Edge TTS、GPT-SoVITS V4 和通用 HTTP TTS 适配，默认关闭。
+
 ```
 QQ 群
   │
@@ -15,7 +18,7 @@ NapCat（QQ NT 协议端）
   │  反向 WS 连入 :8080
   ▼
 reverse_bot.py            入口：WS 服务端 + 消息路由器
-  ├─ scripts/commands/    指令层（注册表模式，33 条指令）
+  ├─ scripts/commands/    指令层（注册表模式，34 条指令）
   ├─ scripts/decision_engine.py   决策层：要不要接话
   │     └─ subprocess ─→ model_primary.py / model_fallback.py
   │                          └─ scripts/llm_pool.py   模型层：本地网关模型池

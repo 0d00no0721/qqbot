@@ -24,6 +24,8 @@ from typing import Dict
 
 import websockets
 
+from scripts import voice_output
+
 # ========== 并发安全锁 ==========
 _plus_one_locks: dict = {}
 _plus_one_locks_guard = asyncio.Lock()
@@ -454,7 +456,12 @@ async def handle_message(websocket, data: dict):
 
             if should_reply and reply_text:
                 at_user = uid_str if bot_mentioned else None
-                await send_message(websocket, group_id, reply_text, at_user=at_user)
+                async def send_reply_text(text):
+                    return await send_message(websocket, group_id, text, at_user=at_user)
+                await voice_output.get_service().reply(
+                    websocket, group_id, uid_str, data.get("message_id"), reply_text,
+                    send_reply_text, is_at=bot_mentioned,
+                )
                 total_ms = int((time.time() - t_req) * 1000)
                 info = decision_engine.get_debug_info()
                 bot_logger.info(f"[决策] 群 {gid_str} 回复（总耗时 {total_ms}ms）| "
@@ -614,6 +621,7 @@ async def handler(websocket, *args):
             bot_logger.info(divider_end)
         bot_logger.info("")
     finally:
+        await voice_output.disconnect(websocket)
         current_websocket = None
         set_napcat_connected(False)
 
@@ -653,6 +661,7 @@ async def main():
         for task in background_tasks:
             task.cancel()
         await asyncio.gather(*background_tasks, return_exceptions=True)
+        await voice_output.close()
         bot_logger.info("服务已停止。")
 
 
