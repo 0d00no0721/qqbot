@@ -1,0 +1,2 @@
+# 可选语音依赖；未启用 Edge 时不需要安装。GPT-SoVITS 通过现有 HTTPX 调用。
+edge-tts>=7.2,<8

@@ -1,0 +1,56 @@
+{
+  "defaults": {
+    "enabled": false,
+    "mode": "off",
+    "voice": "my-sovits",
+    "read_command": true,
+    "only_at": true,
+    "max_chars": 200,
+    "group_cooldown_seconds": 5,
+    "user_cooldown_seconds": 10,
+    "notice_cooldown_seconds": 10
+  },
+  "groups": {
+    "替换为你的群号": {
+      "enabled": true,
+      "mode": "text_and_voice",
+      "voice": "my-sovits"
+    }
+  },
+  "limits": {
+    "concurrency": 1,
+    "max_pending": 4,
+    "group_pending": 2,
+    "queue_timeout_seconds": 30,
+    "synthesis_timeout_seconds": 30,
+    "send_timeout_seconds": 10,
+    "max_audio_bytes": 8388608,
+    "max_buffer_bytes": 33554432
+  },
+  "napcat": {
+    "base_url": "http://127.0.0.1:3000",
+    "token_env": "NAPCAT_HTTP_TOKEN"
+  },
+  "voices": {
+    "edge-xiaoxiao": {
+      "provider": "edge",
+      "voice": "zh-CN-XiaoxiaoNeural",
+      "rate": "+0%",
+      "pitch": "+0Hz",
+      "volume": "+0%"
+    },
+    "my-sovits": {
+      "provider": "gpt_sovits",
+      "endpoint": "http://127.0.0.1:9880/tts",
+      "params": {
+        "text_lang": "zh",
+        "ref_audio_path": "/path/to/reference.wav",
+        "prompt_text": "",
+        "prompt_lang": "zh",
+        "text_split_method": "cut5",
+        "batch_size": 1,
+        "speed_factor": 1.0
+      }
+    }
+  }
+}

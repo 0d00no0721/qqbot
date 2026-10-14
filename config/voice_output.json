@@ -1,0 +1,39 @@
+{
+  "defaults": {
+    "enabled": false,
+    "mode": "off",
+    "voice": "edge-xiaoxiao",
+    "read_command": true,
+    "only_at": true,
+    "max_chars": 200,
+    "group_cooldown_seconds": 5,
+    "user_cooldown_seconds": 10,
+    "notice_cooldown_seconds": 10
+  },
+  "groups": {},
+  "limits": {
+    "concurrency": 1,
+    "max_pending": 4,
+    "group_pending": 2,
+    "queue_timeout_seconds": 30,
+    "synthesis_timeout_seconds": 30,
+    "send_timeout_seconds": 10,
+    "max_audio_bytes": 8388608,
+    "max_buffer_bytes": 33554432,
+    "state_entries": 2048,
+    "dedup_seconds": 600
+  },
+  "napcat": {
+    "base_url": "http://127.0.0.1:3000",
+    "token_env": "NAPCAT_HTTP_TOKEN"
+  },
+  "voices": {
+    "edge-xiaoxiao": {
+      "provider": "edge",
+      "voice": "zh-CN-XiaoxiaoNeural",
+      "rate": "+0%",
+      "pitch": "+0Hz",
+      "volume": "+0%"
+    }
+  }
+}
